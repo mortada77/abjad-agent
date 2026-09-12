@@ -1,0 +1,35 @@
+# =====================================================================
+# Abjad Agi — standalone Docker stack (independent of OpenClaw)
+# Use this when the repo is present on the server:
+#   docker compose up -d --build
+# For Hostinger hPanel "Compose" (build straight from GitHub), use
+# deploy/hpanel-compose.yml instead.
+# =====================================================================
+name: abjad-agent
+
+services:
+  abjad-agent:
+    build:
+      context: .
+    image: abjad-agent:latest
+    container_name: abjad-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      # Health API + QR pairing page. Change PORT in .env if needed.
+      - "${PORT:-47850}:${PORT:-47850}"
+    volumes:
+      - abjad_auth:/app/whatsapp-auth
+      - abjad_data:/app/data
+      - abjad_logs:/app/logs
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  abjad_auth:
+  abjad_data:
+  abjad_logs:

@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Secrets & environment
+.env
+.env.*
+!.env.example
+
+# WhatsApp authentication / session (NEVER commit — contains login credentials)
+whatsapp-auth/
+!whatsapp-auth/.gitkeep
+
+# SQLite database & data
+data/
+!data/.gitkeep
+*.sqlite
+*.sqlite3
+*.db
+
+# Logs
+logs/
+!logs/.gitkeep
+*.log
+
+# QR / auth artifacts
+*.qr
+qr.png
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+dist/
