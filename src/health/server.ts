@@ -11,7 +11,7 @@ import { pause, resume } from '../takeover/takeover.js';
 import { activeProvider, activeProviderName, activeModel } from '../ai/index.js';
 import { generateInsight, suggestReply, analyzeTrends } from '../ai/insight.js';
 import { executiveAsk } from '../executive/brain.js';
-import { textToSpeech } from '../ai/tts.js';
+import { textToSpeech, VOICES, getVoice, getVoiceInstructions } from '../ai/tts.js';
 import { DASHBOARD_HTML } from './dashboard-html.js';
 import { EXECUTIVE_HTML } from './executive-html.js';
 
@@ -194,6 +194,17 @@ export function startHealthServer(): void {
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // ---- Voice settings ----
+  api.get('/voice', (_req, res) => {
+    res.json({ voice: getVoice(), instructions: getVoiceInstructions(), voices: VOICES });
+  });
+  api.post('/voice', (req, res) => {
+    if (req.body?.voice) store.setSetting('exec_voice', String(req.body.voice));
+    if (typeof req.body?.instructions === 'string')
+      store.setSetting('exec_voice_instructions', req.body.instructions);
+    res.json({ ok: true, voice: getVoice() });
   });
 
   // ---- Database backup (download a consistent .sqlite snapshot) ----

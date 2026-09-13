@@ -219,6 +219,16 @@ button:not(.sec):not(.bad){box-shadow:0 0 16px rgba(47,107,255,.55)}
       <p id="mMsg" class="muted"></p>
     </div>
     <div class="card" style="margin-top:14px">
+      <h3>🎙️ صوت المساعد المدير</h3>
+      <p class="muted">اختر الصوت وطريقة الكلام (اللهجة). يتطبّق على صفحة المساعد المدير.</p>
+      <div class="row">
+        <select id="vVoice" style="max-width:180px"></select>
+        <button class="sec" onclick="previewVoice()">🔊 استماع</button>
+      </div>
+      <textarea id="vInstr" style="margin-top:8px;min-height:70px" placeholder="طريقة الكلام (مثال: تحدّث باللهجة العراقية بنبرة ودّية)"></textarea>
+      <div class="row" style="margin-top:8px"><button onclick="saveVoice()">حفظ الصوت</button><span id="vMsg" class="muted"></span></div>
+    </div>
+    <div class="card" style="margin-top:14px">
       <h3>🎨 خلفية الواجهة</h3>
       <p class="muted">اختر نمط الخلفية المتحركة (أو أوقفها لخلفية ثابتة).</p>
       <div class="nav" id="bgOpts"></div>
@@ -379,10 +389,20 @@ function onProviderChange(){var p=document.getElementById("mProvider").value;fil
 function saveModel(){post("/model",{provider:document.getElementById("mProvider").value,model:document.getElementById("mModel").value.trim()}).then(function(r){
 document.getElementById("mMsg").textContent=r.ready?("✅ تم: "+r.provider+" / "+r.model):("⚠️ محفوظ بس "+(r.reason||"غير جاهز"));refreshState();}).catch(handleErr);}
 
+function loadVoice(){api("/voice").then(function(r){var s=document.getElementById("vVoice");s.innerHTML="";
+(r.voices||[]).forEach(function(v){var o=document.createElement("option");o.value=v;o.textContent=v;if(v===r.voice)o.selected=true;s.appendChild(o);});
+document.getElementById("vInstr").value=r.instructions||"";}).catch(handleErr);}
+function saveVoice(){post("/voice",{voice:document.getElementById("vVoice").value,instructions:document.getElementById("vInstr").value}).then(function(){var m=document.getElementById("vMsg");m.textContent="✅ تم الحفظ";setTimeout(function(){m.textContent="";},2000);}).catch(handleErr);}
+function previewVoice(){document.getElementById("vMsg").textContent="⏳ يجهّز الصوت...";
+post("/voice",{voice:document.getElementById("vVoice").value,instructions:document.getElementById("vInstr").value}).then(function(){
+ return fetch("/api/executive/tts",{method:"POST",headers:{"x-admin-token":TOKEN,"content-type":"application/json"},body:JSON.stringify({text:"هلا بيك، آني أبجد مساعدك الشخصي. شلون أگدر أساعدك اليوم؟"})});})
+.then(function(r){if(!r.ok)throw 0;return r.blob();}).then(function(b){document.getElementById("vMsg").textContent="";new Audio(URL.createObjectURL(b)).play();})
+.catch(function(){document.getElementById("vMsg").textContent="تعذّر تشغيل الصوت";});}
+
 function showView(v){["work","ana","know","sys"].forEach(function(x){
 document.getElementById("view-"+x).classList.toggle("hide",x!==v);
 document.getElementById("nav-"+x).classList.toggle("on",x===v);});
-if(v==="ana")loadAnalytics();if(v==="know")loadInstr();if(v==="sys"){loadLogs();refreshQR();loadModel();}}
+if(v==="ana")loadAnalytics();if(v==="know")loadInstr();if(v==="sys"){loadLogs();refreshQR();loadModel();loadVoice();}}
 
 /* ---------- animated background ---------- */
 var BGMODES=[["stars","✨ نجوم"],["particles","🔗 جسيمات"],["grid","▦ شبكة"],["waves","〜 أمواج"],["aurora","🌌 شفق"],["off","■ بدون (ثابت)"]];

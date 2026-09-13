@@ -104,7 +104,7 @@ function apiJson(path,opts){return api(path,opts).then(function(r){if(r.status==
 function boot(){apiJson("/state").then(function(){
   document.getElementById("login").classList.add("hide");
   document.getElementById("app").classList.remove("hide");
-  initOrb();buildWave();loadHist();
+  initHead();buildWave();loadHist();
 }).catch(function(e){if(e&&e.unauth)document.getElementById("lerr").textContent="رمز غير صحيح";
   document.getElementById("login").classList.remove("hide");});}
 
@@ -114,33 +114,72 @@ var COLORS={idle:0x2f6bff,listening:0x38bdf8,thinking:0xa855f7,speaking:0x22d3ee
 var LABELS={idle:"جاهز — احچي معاي",listening:"يستمع...",thinking:"يفكر...",speaking:"",tool:"يراجع البيانات...",error:"صار خطأ"};
 function setState(s,l){STATE=s;document.getElementById("stateLbl").textContent=(l!==undefined?l:(LABELS[s]||""));}
 
-/* ===== WebGL orb (responsive, no eyes) ===== */
-var renderer,scene,camera,core,shell,inner,glow,halo,clock,amp=0,targetAmp=0;
+/* ===== living robot head (Three.js + animated canvas face) ===== */
+var renderer,scene,camera,head,earL,earR,halo,hud,faceTex,faceCtx,faceCanvas,clock;
+var amp=0,targetAmp=0,lookX=0,lookY=0,nextBlink=0,blinking=false,blinkStart=0;
 function fit(){if(!renderer)return;renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;
- camera.position.z=(innerHeight>innerWidth)?8.2:5.4;camera.updateProjectionMatrix();}
-function initOrb(){if(typeof THREE==="undefined")return;
+ camera.position.set(0,0.15,(innerHeight>innerWidth)?4.9:4.0);camera.lookAt(0,0.15,0);camera.updateProjectionMatrix();}
+function initHead(){if(typeof THREE==="undefined")return;
  renderer=new THREE.WebGLRenderer({canvas:document.getElementById("scene"),antialias:true,alpha:true});
  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
- scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(48,1,0.1,100);
- var l=new THREE.PointLight(0x5b8cff,2,60);l.position.set(4,5,6);scene.add(l);scene.add(new THREE.AmbientLight(0x22406b,1));
- core=new THREE.Group();scene.add(core);
- inner=new THREE.Mesh(new THREE.SphereGeometry(0.62,40,40),new THREE.MeshBasicMaterial({color:COLORS.idle,transparent:true,opacity:.9}));core.add(inner);
- glow=new THREE.Mesh(new THREE.SphereGeometry(1.55,40,40),new THREE.MeshBasicMaterial({color:COLORS.idle,transparent:true,opacity:.10,side:THREE.BackSide}));core.add(glow);
- shell=new THREE.Mesh(new THREE.IcosahedronGeometry(1.15,3),new THREE.MeshBasicMaterial({color:COLORS.cyan,wireframe:true,transparent:true,opacity:.28}));core.add(shell);
- var N=520,pos=new Float32Array(N*3);for(var i=0;i<N;i++){var a=Math.random()*6.283,r=1.9+Math.random()*1.7,y=(Math.random()-.5)*3.4;pos[i*3]=Math.cos(a)*r;pos[i*3+1]=y;pos[i*3+2]=Math.sin(a)*r;}
+ scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(46,1,0.1,100);
+ scene.add(new THREE.AmbientLight(0x9db6ff,0.95));
+ var d=new THREE.DirectionalLight(0xffffff,1.05);d.position.set(2,3,4);scene.add(d);
+ var rim=new THREE.PointLight(0x2f6bff,1.6,25);rim.position.set(-3,1,2);scene.add(rim);
+ head=new THREE.Group();head.position.y=0.15;scene.add(head);
+ var helmet=new THREE.Mesh(new THREE.SphereGeometry(1.25,64,64),new THREE.MeshStandardMaterial({color:0xeef3ff,metalness:.35,roughness:.35}));
+ helmet.scale.set(1.12,1.02,0.92);head.add(helmet);
+ var rimg=new THREE.Mesh(new THREE.SphereGeometry(1.3,48,48),new THREE.MeshBasicMaterial({color:0x2f6bff,transparent:true,opacity:.12,side:THREE.BackSide}));
+ rimg.scale.set(1.2,1.1,1);head.add(rimg);
+ faceCanvas=document.createElement("canvas");faceCanvas.width=512;faceCanvas.height=512;faceCtx=faceCanvas.getContext("2d");
+ faceTex=new THREE.CanvasTexture(faceCanvas);
+ var faceMesh=new THREE.Mesh(new THREE.PlaneGeometry(1.55,1.2),new THREE.MeshBasicMaterial({map:faceTex,transparent:true}));
+ faceMesh.position.set(0,0.03,1.02);head.add(faceMesh);
+ var em=new THREE.MeshStandardMaterial({color:0x1b4fd6,metalness:.5,roughness:.3,emissive:0x123b8f,emissiveIntensity:.6});
+ earL=new THREE.Mesh(new THREE.SphereGeometry(0.3,32,32),em);earL.position.set(-1.34,0,0);earL.scale.set(0.62,1,0.9);head.add(earL);
+ earR=earL.clone();earR.material=em.clone();earR.position.x=1.34;head.add(earR);
+ var ant=new THREE.Mesh(new THREE.SphereGeometry(0.09,16,16),new THREE.MeshBasicMaterial({color:0x38bdf8}));ant.position.set(0,1.3,0);head.add(ant);
+ var body=new THREE.Mesh(new THREE.SphereGeometry(1.15,48,48),new THREE.MeshStandardMaterial({color:0xeef3ff,metalness:.3,roughness:.45}));
+ body.scale.set(1.45,0.95,0.9);body.position.y=-2.0;scene.add(body);
+ halo=new THREE.Mesh(new THREE.TorusGeometry(1.7,0.02,16,90),new THREE.MeshBasicMaterial({color:0x38bdf8,transparent:true,opacity:.5}));
+ halo.position.z=-0.3;head.add(halo);
+ var N=90,pos=new Float32Array(N*3);for(var i=0;i<N;i++){var a=i/N*6.283,r=1.9+((i%3)*0.05);pos[i*3]=Math.cos(a)*r;pos[i*3+1]=Math.sin(a)*r;pos[i*3+2]=0;}
  var pg=new THREE.BufferGeometry();pg.setAttribute("position",new THREE.BufferAttribute(pos,3));
- halo=new THREE.Points(pg,new THREE.PointsMaterial({color:COLORS.cyan,size:0.028,transparent:true,opacity:.55}));scene.add(halo);
+ hud=new THREE.Points(pg,new THREE.PointsMaterial({color:0xa855f7,size:0.045,transparent:true,opacity:0}));head.add(hud);
  clock=new THREE.Clock();addEventListener("resize",fit);fit();animate();}
-function setCol(c){if(!inner)return;inner.material.color.setHex(c);glow.material.color.setHex(c);shell.material.color.setHex(c);halo.material.color.setHex(c);}
+
+function rrect(g,x,y,w,h,r){g.beginPath();g.moveTo(x+r,y);g.arcTo(x+w,y,x+w,y+h,r);g.arcTo(x+w,y+h,x,y+h,r);g.arcTo(x,y+h,x,y,r);g.arcTo(x,y,x+w,y,r);g.closePath();}
+function drawEye(g,cx,cy,open){g.save();g.translate(cx,cy);g.scale(1,Math.max(open,0.06));g.beginPath();g.lineWidth=22;g.arc(0,0,42,Math.PI*0.15,Math.PI*0.85);g.stroke();g.restore();}
+function drawFace(color,eyeOpen,mouthOpen,lx,ly){var g=faceCtx;g.clearRect(0,0,512,512);
+ rrect(g,28,70,456,372,64);g.fillStyle="#060b16";g.fill();
+ var hex="#"+(color>>>0).toString(16).padStart(6,"0");
+ g.save();g.shadowColor=hex;g.shadowBlur=28;g.strokeStyle=hex;g.fillStyle=hex;g.lineCap="round";
+ var lcx=256-104+lx*26,rcx=256+104+lx*26,ecy=224+ly*22;
+ drawEye(g,lcx,ecy,eyeOpen);drawEye(g,rcx,ecy,eyeOpen);
+ var mx=256+lx*20,my=336+ly*16;
+ if(mouthOpen>0.06){g.beginPath();g.lineWidth=14;g.ellipse(mx,my,46,18+mouthOpen*52,0,0,6.283);g.stroke();}
+ else{g.beginPath();g.lineWidth=16;g.arc(mx,my-8,48,Math.PI*0.12,Math.PI*0.88);g.stroke();}
+ g.restore();faceTex.needsUpdate=true;}
+
 function animate(){requestAnimationFrame(animate);if(!renderer)return;var t=clock.getElapsedTime();
- if(speaking&&spAnalyser){spAnalyser.getByteFrequencyData(spData);var s=0;for(var i=0;i<spData.length;i++)s+=spData[i];targetAmp=Math.min((s/spData.length/255)*2.4,1.3);}
- amp+=(targetAmp-amp)*0.18;setCol(COLORS[STATE]||COLORS.idle);
- var breathe=STATE==="idle"?0.02*Math.sin(t*1.1):0;var sc=1+breathe+amp*0.35;core.scale.set(sc,sc,sc);
- inner.scale.setScalar(1+amp*0.5);inner.material.opacity=.75+amp*.25;
- core.rotation.y+=STATE==="thinking"?0.05:0.005;shell.rotation.y-=0.004;shell.rotation.x=0.12*Math.sin(t*0.4);
- glow.material.opacity=0.08+amp*0.5;halo.rotation.y-=0.0016;halo.material.opacity=0.4+amp*0.4;
- if(STATE==="thinking")targetAmp=0.22+0.14*Math.sin(t*8);
- if(STATE==="listening"&&micAnalyser){micAnalyser.getByteFrequencyData(micData);var m=0;for(var j=0;j<micData.length;j++)m+=micData[j];targetAmp=Math.min((m/micData.length/255)*2.4,1.3);}
+ if(speaking&&spAnalyser){spAnalyser.getByteFrequencyData(spData);var s=0;for(var i=0;i<spData.length;i++)s+=spData[i];targetAmp=Math.min((s/spData.length/255)*2.6,1.3);}
+ else if(STATE==="listening"&&micAnalyser){micAnalyser.getByteFrequencyData(micData);var m=0;for(var j=0;j<micData.length;j++)m+=micData[j];targetAmp=Math.min((m/micData.length/255)*2.6,1.3);}
+ else if(STATE==="thinking"||STATE==="tool"){targetAmp=0.12+0.08*Math.sin(t*6);}
+ else{targetAmp=0;}
+ amp+=(targetAmp-amp)*0.2;
+ var col=COLORS[STATE]||COLORS.idle;
+ var tlx=0,tly=0;if(STATE==="thinking"||STATE==="tool"){tlx=0.55;tly=-0.6;}else if(STATE==="listening"){tly=0.12;}
+ lookX+=(tlx-lookX)*0.06;lookY+=(tly-lookY)*0.06;
+ if(t>nextBlink){blinking=true;blinkStart=t;nextBlink=t+2.2+Math.random()*3.4;}
+ var eo=1;if(blinking){var pr=(t-blinkStart)/0.15;if(pr>=1)blinking=false;else eo=pr<0.5?1-pr*2:(pr-0.5)*2;}
+ var mo=(STATE==="speaking")?Math.min(amp*1.25,1):0;
+ head.position.y=0.15+0.04*Math.sin(t*1.4)+(STATE==="speaking"?amp*0.05*Math.sin(t*13):0);
+ head.rotation.y=lookX*0.5+(STATE==="idle"?0.05*Math.sin(t*0.6):0);
+ head.rotation.x=-lookY*0.35+(STATE==="speaking"?amp*0.07*Math.sin(t*11):0)+0.02*Math.sin(t*1.1);
+ halo.material.color.setHex(col);halo.material.opacity=0.32+amp*0.55;halo.rotation.z+=0.003+amp*0.02;
+ hud.material.opacity+=(((STATE==="thinking"||STATE==="tool")?0.9:0)-hud.material.opacity)*0.1;hud.rotation.z-=0.02;
+ earL.material.emissiveIntensity=0.5+amp*1.2;earR.material.emissiveIntensity=0.5+amp*1.2;
+ drawFace(col,eo,mo,lookX,lookY);
  renderer.render(scene,camera);drawWave();}
 
 /* ===== wave ===== */
