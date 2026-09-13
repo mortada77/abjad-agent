@@ -76,6 +76,7 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
   };
 
   let sock: WASocket | null = null;
+  let resetting = false;
 
   const send = async (jid: string, text: string) => {
     if (!sock) throw new Error('WhatsApp socket not connected');
@@ -90,11 +91,20 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
   control.sendMessage = send;
   control.resetSession = async () => {
     logger.warn('[WHATSAPP] resetSession requested from dashboard');
+    resetting = true;
+    // Detach the old socket so its close event does not stomp our new state,
+    // and never `await logout()` (it hangs on an already-dead session).
     try {
-      await sock?.logout();
+      sock?.ev.removeAllListeners('connection.update');
     } catch {
-      /* ignore — may already be disconnected */
+      /* ignore */
     }
+    try {
+      sock?.end(new Error('reset'));
+    } catch {
+      /* ignore */
+    }
+    sock = null;
     try {
       fs.rmSync(config.paths.auth, { recursive: true, force: true });
       fs.mkdirSync(config.paths.auth, { recursive: true });
@@ -103,6 +113,9 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
     }
     runtime.whatsapp = 'connecting';
     runtime.currentQR = null;
+    runtime.lastDisconnect = null;
+    runtime.reconnectAttempts = 0;
+    resetting = false;
     await connect().catch((e) =>
       logger.error('[WHATSAPP] reconnect after reset failed: %s', (e as Error).message),
     );
@@ -150,6 +163,7 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
       }
 
       if (connection === 'close') {
+        if (resetting) return; // a manual reset is swapping the socket; ignore this close
         const statusCode = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
         const reasonName = statusCode ? disconnectName[statusCode] ?? String(statusCode) : 'unknown';
         runtime.currentQR = null;
