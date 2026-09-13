@@ -11,6 +11,7 @@ import { pause, resume } from '../takeover/takeover.js';
 import { activeProvider, activeProviderName, activeModel } from '../ai/index.js';
 import { generateInsight, suggestReply, analyzeTrends } from '../ai/insight.js';
 import { executiveAsk } from '../executive/brain.js';
+import { textToSpeech } from '../ai/tts.js';
 import { DASHBOARD_HTML } from './dashboard-html.js';
 import { EXECUTIVE_HTML } from './executive-html.js';
 
@@ -182,6 +183,17 @@ export function startHealthServer(): void {
   api.post('/executive/reset', (req, res) => {
     store.execClear(String(req.body?.session || 'default'));
     res.json({ ok: true });
+  });
+  api.post('/executive/tts', async (req, res) => {
+    const text = String(req.body?.text || '').trim();
+    if (!text) return res.status(400).json({ error: 'text required' });
+    try {
+      const buf = await textToSpeech(text);
+      if (!buf) return res.status(503).json({ error: 'tts unavailable' });
+      res.type('audio/mpeg').send(buf);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   // ---- Database backup (download a consistent .sqlite snapshot) ----
