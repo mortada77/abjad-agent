@@ -1,32 +1,29 @@
 # =====================================================================
-# Abjad Agi — Compose file to PASTE into Hostinger hPanel:
-#   VPS -> Docker Manager -> Compose
-# It builds the image straight from the GitHub repo (no terminal, no
-# file upload needed). Fill the two secrets marked >>> before deploying.
-#
-# NOTE: __REPO_URL__ is replaced with the real GitHub URL before use.
+# Abjad Agi — PASTE THIS into Hostinger hPanel:
+#   VPS -> Docker Manager -> Compose (Create / New compose project)
+# Builds the image straight from GitHub. No terminal, no file upload.
+# Fill the ONE line marked >>> with your OpenAI API key before deploy.
 # =====================================================================
 name: abjad-agent
 
 services:
   abjad-agent:
-    build:
-      context: __REPO_URL__#main
-    image: abjad-agent:latest
+    # Prebuilt image published by GitHub Actions (hPanel pulls it, no build).
+    image: ghcr.io/mortada77/abjad-agent:latest
     container_name: abjad-agent
     restart: unless-stopped
     ports:
       - "47850:47850"
     environment:
       # ---- AI provider ----
-      AI_PROVIDER: anthropic
-      # >>> PASTE YOUR REAL ANTHROPIC API KEY HERE:
-      ANTHROPIC_API_KEY: ""
-      ANTHROPIC_MODEL: claude-opus-5
-      # (only if AI_PROVIDER=openai)
+      AI_PROVIDER: openai
+      # >>> PASTE YOUR OpenAI API KEY (starts with sk-...) between the quotes:
       OPENAI_API_KEY: ""
       OPENAI_MODEL: gpt-4o-mini
-      # ---- AI limits ----
+      # (Anthropic left empty; switch AI_PROVIDER to "anthropic" to use it)
+      ANTHROPIC_API_KEY: ""
+      ANTHROPIC_MODEL: claude-opus-5
+      # ---- AI limits (keep cost low) ----
       AI_MAX_TOKENS: "700"
       AI_TIMEOUT_MS: "45000"
       AI_MAX_RETRIES: "2"
@@ -41,8 +38,7 @@ services:
       DEBOUNCE_MS: "2500"
       # ---- Health / QR server ----
       PORT: "47850"
-      # >>> SET A RANDOM STRING HERE (used to open the QR page):
-      PAIRING_TOKEN: "change-me-to-a-random-string"
+      PAIRING_TOKEN: "4dd2cd30ea4bc7608fada571"
       # ---- Logging ----
       LOG_LEVEL: info
       NODE_ENV: production
