@@ -26,10 +26,7 @@ export class MessageProcessor {
   private pending = new Map<string, PendingState>();
   private globalLimiter = new Semaphore(config.ai.maxConcurrency);
 
-  constructor(
-    private readonly send: SendReply,
-    private readonly adminJid: string | null,
-  ) {}
+  constructor(private readonly send: SendReply) {}
 
   /** Queue an incoming user message for a contact (applies debounce). */
   enqueue(jid: string, text: string): void {
@@ -108,7 +105,7 @@ export class MessageProcessor {
     }
   }
 
-  /** A management decision is needed: notify the admin, log it, pause AI. */
+  /** A management decision is needed: record it (surfaced in the dashboard) + pause AI. */
   private async handleEscalation(jid: string, reason: string, lastMsg: string): Promise<void> {
     const contact = store.getContact(jid);
     const name = contact?.display_name ?? null;
@@ -117,29 +114,8 @@ export class MessageProcessor {
     const id = store.addEscalation({ jid, name, phone, reason, lastMsg });
     logger.warn('[ESCALATE] #%d %s (%s): %s', id, name ?? phone ?? jid, phone ?? '', reason);
 
-    // Pause AI for this contact so the operator can take over.
+    // Pause AI for this contact so a human can take over from the dashboard.
     pause(jid);
-
-    // Prefer the admin address that registered via /admin (handles @lid), else
-    // the configured ADMIN_NUMBER.
-    const target = store.getSetting('admin_jid') || this.adminJid;
-    if (target) {
-      const who = name ? `${name} (${phone ?? ''})` : phone ?? jid;
-      const note =
-        `🔔 *محتاج قرارك* (طلب #${id})\n\n` +
-        `👤 العميل: ${who}\n` +
-        `📌 الطلب: ${reason}\n` +
-        `💬 آخر رسالة: "${lastMsg}"\n\n` +
-        `↩️ ردّ عليّ بالقرار وأنا أوصله للعميل مباشرة.\n` +
-        `لو عندك أكثر من طلب، ابدأ رسالتك بـ #${id}`;
-      try {
-        await this.send(target, note);
-      } catch (err) {
-        logger.error('[ESCALATE] failed to notify admin: %s', (err as Error).message);
-      }
-    } else {
-      logger.warn('[ESCALATE] no admin registered — no notification sent');
-    }
   }
 
   private async generate(jid: string, userText: string): Promise<string> {

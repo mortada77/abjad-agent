@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { config } from '../config.js';
 import { store } from '../db/index.js';
-import type { AIProvider, GenerateParams } from './provider.js';
+import type { AIProvider, GenerateParams, RunToolsParams, RunToolsResult } from './provider.js';
 
 export class OpenAIProvider implements AIProvider {
   readonly name = 'openai';
@@ -62,5 +62,61 @@ export class OpenAIProvider implements AIProvider {
       ],
     });
     return (res.choices[0]?.message?.content ?? '').trim();
+  }
+
+  async runWithTools(p: RunToolsParams): Promise<RunToolsResult> {
+    if (!this.client) throw new Error('OpenAI provider not configured');
+    const tools: OpenAI.Chat.ChatCompletionTool[] = p.tools.map((t) => ({
+      type: 'function',
+      function: { name: t.name, description: t.description, parameters: t.parameters as any },
+    }));
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+      { role: 'system', content: p.system },
+      ...p.history.map((h) => ({ role: h.role, content: h.content }) as OpenAI.Chat.ChatCompletionMessageParam),
+      { role: 'user', content: p.user },
+    ];
+    const toolsUsed: string[] = [];
+    const maxRounds = p.maxRounds ?? 5;
+
+    for (let round = 0; round < maxRounds; round++) {
+      const res = await this.client.chat.completions.create({
+        model: this.model,
+        max_tokens: config.ai.maxTokens,
+        messages,
+        tools,
+        tool_choice: 'auto',
+      });
+      const msg = res.choices[0]?.message;
+      if (!msg) break;
+      if (msg.tool_calls && msg.tool_calls.length > 0) {
+        messages.push(msg);
+        for (const call of msg.tool_calls) {
+          const fn = (call as any).function;
+          if (!fn) continue;
+          let args: any = {};
+          try {
+            args = fn.arguments ? JSON.parse(fn.arguments) : {};
+          } catch {
+            args = {};
+          }
+          toolsUsed.push(fn.name);
+          p.onToolStart?.(fn.name, args);
+          let result: any;
+          try {
+            result = await p.execute(fn.name, args);
+          } catch (err) {
+            result = { error: (err as Error).message };
+          }
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: JSON.stringify(result ?? {}),
+          });
+        }
+        continue; // let the model read tool results
+      }
+      return { text: (msg.content ?? '').trim(), toolsUsed };
+    }
+    return { text: 'وصلت للحد الأقصى من الخطوات بدون نتيجة نهائية.', toolsUsed };
   }
 }

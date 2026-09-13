@@ -17,25 +17,10 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { runtime } from '../runtime.js';
 import { store } from '../db/index.js';
-import { control, toJid } from '../control.js';
+import { control } from '../control.js';
 import { MessageProcessor } from './processor.js';
-import {
-  handleOperatorCommand,
-  onOperatorManualMessage,
-  isAiActive,
-  resume,
-} from '../takeover/takeover.js';
-import { composeDecision } from '../ai/insight.js';
+import { handleOperatorCommand, onOperatorManualMessage, isAiActive } from '../takeover/takeover.js';
 import { sleep } from '../util.js';
-
-/** Compare two numbers by their last 10 digits (tolerates local vs intl format). */
-function sameNumber(a: string, b: string): boolean {
-  const da = a.replace(/\D/g, '');
-  const db = b.replace(/\D/g, '');
-  if (!da || !db) return false;
-  const n = 10;
-  return da.slice(-n) === db.slice(-n);
-}
 
 // Note: some DisconnectReason values share the same numeric code
 // (connectionLost and timedOut are both 408), so build without duplicate keys.
@@ -127,8 +112,7 @@ export async function startWhatsApp(): Promise<void> {
     rememberSent(res?.key?.id ?? undefined);
   };
 
-  const adminJid = config.admin.number ? toJid(config.admin.number) : null;
-  const processor = new MessageProcessor(send, adminJid);
+  const processor = new MessageProcessor(send);
 
   // Expose live capabilities to the dashboard.
   control.sendMessage = send;
@@ -264,83 +248,6 @@ export async function startWhatsApp(): Promise<void> {
     });
   };
 
-  function isAdmin(jid: string): boolean {
-    const stored = store.getSetting('admin_jid');
-    if (stored && stored === jid) return true;
-    if (adminJid && sameNumber(jid, adminJid)) return true;
-    return false;
-  }
-
-  async function handleAdminMessage(fromJid: string, text: string): Promise<void> {
-    const reply = (t: string) => send(fromJid, t);
-
-    if (text.startsWith('/')) {
-      const [cmd, ...rest] = text.split(/\s+/);
-      const arg = rest.join(' ').trim();
-      switch (cmd) {
-        case '/help':
-          return reply(
-            'أوامر التحكم:\n' +
-              '• ردّ بالقرار مباشرة (أو ابدأ بـ #رقم_الطلب) وأنا أوصله للعميل.\n' +
-              '/pending — الطلبات المعلّقة\n' +
-              '/status — حالة النظام\n' +
-              '/note <نص> — إضافة تعليمة دائمة للبوت\n' +
-              '/help — هذه القائمة',
-          );
-        case '/status':
-          return reply(
-            `الحالة: واتساب=${runtime.whatsapp} · AI=${runtime.aiReady ? 'جاهز' : 'غير جاهز'} (${runtime.aiProviderName})\n` +
-              `الرد التلقائي: ${control.aiGloballyEnabled ? 'يعمل' : 'متوقف'}`,
-          );
-        case '/pending': {
-          const list = store.listUnhandledEscalations(10);
-          if (list.length === 0) return reply('ما عندك طلبات معلّقة 👍');
-          return reply(
-            'الطلبات المعلّقة:\n' +
-              list
-                .map((e) => `#${e.id} — ${e.name || e.phone || e.jid}: ${e.reason}`)
-                .join('\n') +
-              '\n\nردّ بالقرار وابدأ بـ #الرقم.',
-          );
-        }
-        case '/note':
-          if (!arg) return reply('اكتب التعليمة بعد /note');
-          {
-            const cur = store.getSetting('extra_instructions') || '';
-            store.setSetting('extra_instructions', (cur + '\n- ' + arg).trim());
-          }
-          return reply('✅ تم إضافة التعليمة للبوت (فعّالة فوراً).');
-        default:
-          return reply('أمر غير معروف. اكتب /help');
-      }
-    }
-
-    // Not a command -> a decision to relay to a pending customer.
-    let id: number | null = null;
-    let body = text;
-    const m = text.match(/^#(\d+)\s*([\s\S]*)$/);
-    if (m) {
-      id = Number(m[1]);
-      body = m[2].trim();
-    }
-    const esc = id ? store.getEscalation(id) : store.listUnhandledEscalations(1)[0];
-    if (!esc) return reply('ما عندي طلب معلّق حالياً. اكتب /pending للقائمة.');
-    if ('handled' in esc && esc.handled) return reply(`الطلب #${esc.id} تم التعامل معه مسبقاً.`);
-    if (!body) return reply('اكتب القرار بعد رقم الطلب.');
-
-    const customerMsg = await composeDecision(body);
-    try {
-      await send(esc.jid, customerMsg);
-      store.addMessage(esc.jid, 'assistant', customerMsg);
-      store.markEscalationHandled(esc.id);
-      resume(esc.jid);
-      const who = esc.name || esc.phone || esc.jid;
-      await reply(`✅ تم إرسال قرارك للعميل ${who}:\n"${customerMsg}"`);
-    } catch (err) {
-      await reply('تعذّر الإرسال للعميل: ' + (err as Error).message);
-    }
-  }
-
   async function handleIncoming(msg: proto.IWebMessageInfo): Promise<void> {
     const key = msg.key;
     if (!key) return;
@@ -393,30 +300,10 @@ export async function startWhatsApp(): Promise<void> {
     store.markProcessed(msgId);
 
     if (!text || !text.trim()) return; // no supported text content (image/doc handled later)
-    const body = text.trim();
 
-    // One-time admin registration (works even when your number is hidden as @lid):
-    //   send  /admin <PAIRING_TOKEN>  from your phone.
-    if (body.startsWith('/admin ')) {
-      const pin = body.split(/\s+/)[1] || '';
-      if (pin === config.http.pairingToken) {
-        store.setSetting('admin_jid', jid);
-        logger.warn('[ADMIN] registered admin jid=%s', jid);
-        await send(jid, '✅ تم تسجيلك كأدمن. الحين تقدر تعطي أوامر (اكتب /help) وتستلم إشعارات القرار وترد عليها.');
-      } else {
-        await send(jid, '❌ رمز غير صحيح.');
-      }
-      return;
-    }
-
-    // Admin channel: only commands (/...) and decisions (#id ...) are intercepted.
-    // Plain messages fall through to normal AI chat so you can talk to / test the
-    // agent from your own number and your saved instructions apply.
-    if (isAdmin(jid) && (body.startsWith('/') || /^#\d+/.test(body))) {
-      await handleAdminMessage(jid, body);
-      return;
-    }
-
+    // WhatsApp is marketing/sales only: EVERY sender (including the owner's own
+    // number) is treated as a customer. Owner control lives in the dashboard
+    // Executive AI, never over WhatsApp.
     const pushName = msg.pushName ?? null;
     store.upsertContact(jid, phoneFromJid(jid), pushName);
     store.addMessage(jid, 'user', text, msgId);

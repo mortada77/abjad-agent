@@ -101,6 +101,7 @@ button:not(.sec):not(.bad){box-shadow:0 0 16px rgba(47,107,255,.55)}
   </div>
   <div class="row">
     <span id="uptime" class="muted"></span>
+    <a href="/executive" style="text-decoration:none"><button>🧠 المساعد المدير</button></a>
     <label class="switch"><input type="checkbox" id="glob" onchange="toggleGlobal()"/> الرد التلقائي</label>
     <button class="sec" onclick="logout()">خروج</button>
   </div>
@@ -199,6 +200,7 @@ button:not(.sec):not(.bad){box-shadow:0 0 16px rgba(47,107,255,.55)}
       <div id="sysState" class="muted"></div>
       <div class="row" style="margin-top:10px">
         <button class="bad" onclick="resetSession()">إعادة ربط الواتساب (QR جديد)</button>
+        <button class="sec" onclick="downloadBackup()">⬇️ نسخة احتياطية من قاعدة البيانات</button>
         <button class="sec" onclick="refreshAll()">تحديث</button>
       </div>
     </div>
@@ -355,6 +357,7 @@ function markStage(s){if(curJid)post("/contact/stage",{jid:curJid,stage:s}).then
 
 function toggleGlobal(){post("/ai-global",{enabled:document.getElementById("glob").checked}).catch(handleErr);}
 function resetSession(){if(confirm("تسجيل خروج من واتساب وطلب QR جديد. متأكد؟"))post("/reset-session",{}).then(function(){alert("جاري إعادة الربط... انتظر ظهور QR بقسم النظام.");}).catch(handleErr);}
+function downloadBackup(){window.open("/api/backup?token="+encodeURIComponent(TOKEN),"_blank");}
 function loadLogs(){fetch("/api/logs",{headers:{"x-admin-token":TOKEN}}).then(function(r){return r.text();}).then(function(t){var e=document.getElementById("logs");e.textContent=t;e.scrollTop=9e9;}).catch(handleErr);}
 
 function loadAnalytics(){api("/analytics").then(function(a){document.getElementById("a_contacts").textContent=a.totalContacts;

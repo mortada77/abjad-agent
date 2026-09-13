@@ -10,7 +10,9 @@ import { control } from '../control.js';
 import { pause, resume } from '../takeover/takeover.js';
 import { activeProvider, activeProviderName, activeModel } from '../ai/index.js';
 import { generateInsight, suggestReply, analyzeTrends } from '../ai/insight.js';
+import { executiveAsk } from '../executive/brain.js';
 import { DASHBOARD_HTML } from './dashboard-html.js';
+import { EXECUTIVE_HTML } from './executive-html.js';
 
 export function startHealthServer(): void {
   const app = express();
@@ -51,6 +53,11 @@ export function startHealthServer(): void {
   // ---- Dashboard SPA ----
   app.get('/', (_req, res) => {
     res.type('html').send(DASHBOARD_HTML);
+  });
+
+  // ---- Executive AI page (owner assistant, voice-first) ----
+  app.get('/executive', (_req, res) => {
+    res.type('html').send(EXECUTIVE_HTML);
   });
 
   // ---- QR pairing page (token in query) ----
@@ -158,6 +165,40 @@ export function startHealthServer(): void {
 
   api.get('/logs', (_req, res) => {
     res.type('text/plain').send(recentLogs(400));
+  });
+
+  // ---- Executive AI ----
+  api.post('/executive/chat', async (req, res) => {
+    const message = String(req.body?.message || '').trim();
+    const session = String(req.body?.session || 'default');
+    if (!message) return res.status(400).json({ error: 'message required' });
+    const r = await executiveAsk(message, session);
+    res.json(r);
+  });
+  api.get('/executive/history', (req, res) => {
+    const session = String(req.query.session || 'default');
+    res.json(store.execRecent(60, session));
+  });
+  api.post('/executive/reset', (req, res) => {
+    store.execClear(String(req.body?.session || 'default'));
+    res.json({ ok: true });
+  });
+
+  // ---- Database backup (download a consistent .sqlite snapshot) ----
+  api.get('/backup', async (_req, res) => {
+    try {
+      const tmp = path.join(config.paths.data, `backup-${Date.now()}.sqlite`);
+      await store.backup(tmp);
+      res.download(tmp, `abjad-backup-${new Date().toISOString().slice(0, 10)}.sqlite`, () => {
+        try {
+          fs.unlinkSync(tmp);
+        } catch {
+          /* ignore */
+        }
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   // ---- CRM / sales ----

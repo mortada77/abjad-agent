@@ -71,6 +71,44 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_escalations_created ON escalations(created_at DESC);
+
+  -- ===== Executive AI (owner assistant, separate from customers) =====
+  CREATE TABLE IF NOT EXISTS executive_messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session    TEXT NOT NULL DEFAULT 'default',
+    role       TEXT NOT NULL,             -- 'user' | 'assistant'
+    content    TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_exec_msgs ON executive_messages(session, id);
+
+  CREATE TABLE IF NOT EXISTS executive_state (
+    session         TEXT PRIMARY KEY,
+    summary         TEXT,
+    summarized_upto INTEGER NOT NULL DEFAULT 0,
+    updated_at      INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS executive_tasks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT NOT NULL,
+    description TEXT,
+    status      TEXT NOT NULL DEFAULT 'open',   -- open | done
+    priority    TEXT NOT NULL DEFAULT 'normal', -- low | normal | high
+    due_at      INTEGER,
+    related     TEXT,
+    source      TEXT,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS audit_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor      TEXT NOT NULL,
+    action     TEXT NOT NULL,
+    details    TEXT,
+    created_at INTEGER NOT NULL
+  );
 `);
 
 // --- Lightweight migrations: add CRM columns to contacts if missing ---
@@ -417,6 +455,113 @@ export const store = {
 
   markEscalationHandled(id: number) {
     stmtHandleEscalation.run(id);
+  },
+
+  // ===== Executive AI memory =====
+  execAddMessage(role: 'user' | 'assistant', content: string, session = 'default') {
+    db.prepare(
+      `INSERT INTO executive_messages (session, role, content, created_at) VALUES (?,?,?,?)`,
+    ).run(session, role, content, Date.now());
+  },
+  execRecent(limit = 24, session = 'default'): ChatTurn[] {
+    const rows = db
+      .prepare(
+        `SELECT id, role, content FROM executive_messages WHERE session = ? ORDER BY id DESC LIMIT ?`,
+      )
+      .all(session, limit) as { id: number; role: 'user' | 'assistant'; content: string }[];
+    return rows.reverse().map((r) => ({ role: r.role, content: r.content }));
+  },
+  execCount(session = 'default'): number {
+    return (
+      db.prepare(`SELECT COUNT(*) AS c FROM executive_messages WHERE session = ?`).get(session) as {
+        c: number;
+      }
+    ).c;
+  },
+  execOlder(beforeKeep: number, session = 'default') {
+    const total = this.execCount(session);
+    const older = total - beforeKeep;
+    if (older <= 0) return [];
+    return db
+      .prepare(
+        `SELECT id, role, content FROM executive_messages WHERE session = ? ORDER BY id ASC LIMIT ?`,
+      )
+      .all(session, older) as { id: number; role: string; content: string }[];
+  },
+  execGetState(session = 'default'): { summary: string; summarized_upto: number } {
+    const row = db.prepare(`SELECT * FROM executive_state WHERE session = ?`).get(session) as
+      | { summary: string | null; summarized_upto: number }
+      | undefined;
+    return { summary: row?.summary ?? '', summarized_upto: row?.summarized_upto ?? 0 };
+  },
+  execSetSummary(summary: string, upto: number, session = 'default') {
+    db.prepare(
+      `INSERT INTO executive_state (session, summary, summarized_upto, updated_at) VALUES (@s,@sum,@u,@now)
+       ON CONFLICT(session) DO UPDATE SET summary=@sum, summarized_upto=@u, updated_at=@now`,
+    ).run({ s: session, sum: summary, u: upto, now: Date.now() });
+  },
+  execClear(session = 'default') {
+    db.prepare(`DELETE FROM executive_messages WHERE session = ?`).run(session);
+    db.prepare(`DELETE FROM executive_state WHERE session = ?`).run(session);
+  },
+
+  // ===== Executive tasks =====
+  taskCreate(t: { title: string; description?: string; priority?: string; due_at?: number; related?: string; source?: string }) {
+    const now = Date.now();
+    const info = db
+      .prepare(
+        `INSERT INTO executive_tasks (title, description, status, priority, due_at, related, source, created_at, updated_at)
+         VALUES (@title,@description,'open',@priority,@due_at,@related,@source,@now,@now)`,
+      )
+      .run({
+        title: t.title,
+        description: t.description ?? null,
+        priority: t.priority ?? 'normal',
+        due_at: t.due_at ?? null,
+        related: t.related ?? null,
+        source: t.source ?? 'executive',
+        now,
+      });
+    return Number(info.lastInsertRowid);
+  },
+  taskList(status?: string) {
+    if (status) {
+      return db
+        .prepare(`SELECT * FROM executive_tasks WHERE status = ? ORDER BY id DESC LIMIT 100`)
+        .all(status);
+    }
+    return db.prepare(`SELECT * FROM executive_tasks ORDER BY id DESC LIMIT 100`).all();
+  },
+  taskUpdate(id: number, fields: { title?: string; status?: string; priority?: string; due_at?: number | null; description?: string }) {
+    const cur = db.prepare(`SELECT * FROM executive_tasks WHERE id = ?`).get(id) as any;
+    if (!cur) return false;
+    db.prepare(
+      `UPDATE executive_tasks SET title=@title, description=@description, status=@status,
+       priority=@priority, due_at=@due_at, updated_at=@now WHERE id=@id`,
+    ).run({
+      id,
+      title: fields.title ?? cur.title,
+      description: fields.description ?? cur.description,
+      status: fields.status ?? cur.status,
+      priority: fields.priority ?? cur.priority,
+      due_at: fields.due_at === undefined ? cur.due_at : fields.due_at,
+      now: Date.now(),
+    });
+    return true;
+  },
+
+  audit(actor: string, action: string, details?: string) {
+    db.prepare(`INSERT INTO audit_log (actor, action, details, created_at) VALUES (?,?,?,?)`).run(
+      actor,
+      action,
+      details ?? null,
+      Date.now(),
+    );
+  },
+
+  /** Consistent backup of the SQLite DB to a destination path. */
+  backup(dest: string): Promise<unknown> {
+    return (db as any).backup(dest);
   },
 };
 
