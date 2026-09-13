@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { Boom } from '@hapi/boom';
 import makeWASocket, {
   DisconnectReason,
@@ -39,6 +40,19 @@ function sameNumber(a: string, b: string): boolean {
 
 // Note: some DisconnectReason values share the same numeric code
 // (connectionLost and timedOut are both 408), so build without duplicate keys.
+/** Delete the CONTENTS of the auth dir (never the dir itself — it's a volume mount). */
+function clearAuthDir(): boolean {
+  try {
+    for (const f of fs.readdirSync(config.paths.auth)) {
+      fs.rmSync(path.join(config.paths.auth, f), { recursive: true, force: true });
+    }
+    return true;
+  } catch (err) {
+    logger.error('[WHATSAPP] failed to clear auth contents: %s', (err as Error).message);
+    return false;
+  }
+}
+
 const disconnectName: Record<number, string> = {
   [DisconnectReason.badSession]: 'badSession',
   [DisconnectReason.connectionClosed]: 'connectionClosed',
@@ -92,6 +106,7 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
 
   let sock: WASocket | null = null;
   let resetting = false;
+  let logoutRecoveries = 0;
 
   const send = async (jid: string, text: string) => {
     if (!sock) throw new Error('WhatsApp socket not connected');
@@ -134,16 +149,12 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
       /* ignore */
     }
     sock = null;
-    try {
-      fs.rmSync(config.paths.auth, { recursive: true, force: true });
-      fs.mkdirSync(config.paths.auth, { recursive: true });
-    } catch (err) {
-      logger.error('[WHATSAPP] failed to clear auth: %s', (err as Error).message);
-    }
+    clearAuthDir();
     runtime.whatsapp = 'connecting';
     runtime.currentQR = null;
     runtime.lastDisconnect = null;
     runtime.reconnectAttempts = 0;
+    logoutRecoveries = 0;
     resetting = false;
     await connect().catch((e) =>
       logger.error('[WHATSAPP] reconnect after reset failed: %s', (e as Error).message),
@@ -175,6 +186,7 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
       if (qr) {
         runtime.whatsapp = 'waiting_qr';
         runtime.currentQR = qr;
+        logoutRecoveries = 0;
         logger.warn('[WHATSAPP] Scan the QR to pair. Web: http://<server-ip>:%d/qr?token=%s', config.http.port, config.http.pairingToken);
         qrcodeTerminal.generate(qr, { small: true });
       }
@@ -188,6 +200,7 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
         runtime.whatsapp = 'connected';
         runtime.currentQR = null;
         runtime.reconnectAttempts = 0;
+        logoutRecoveries = 0;
         logger.info('[WHATSAPP] connected');
       }
 
@@ -202,18 +215,18 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
         if (statusCode === DisconnectReason.loggedOut) {
           // Session ended: clear it and come back with a fresh QR automatically.
           runtime.whatsapp = 'logged_out';
+          logoutRecoveries += 1;
+          if (logoutRecoveries > 5) {
+            logger.error('[WHATSAPP] too many logout recoveries — stopping. Use إعادة الربط.');
+            return;
+          }
           logger.error('[WHATSAPP] Logged out — clearing session and generating a new QR.');
           try {
             sock?.ev.removeAllListeners('connection.update');
           } catch {
             /* ignore */
           }
-          try {
-            fs.rmSync(config.paths.auth, { recursive: true, force: true });
-            fs.mkdirSync(config.paths.auth, { recursive: true });
-          } catch (err) {
-            logger.error('[WHATSAPP] failed to clear auth: %s', (err as Error).message);
-          }
+          clearAuthDir();
           await sleep(2000);
           runtime.whatsapp = 'connecting';
           runtime.currentQR = null;
