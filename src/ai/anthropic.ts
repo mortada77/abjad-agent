@@ -1,11 +1,16 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
+import { store } from '../db/index.js';
 import type { AIProvider, GenerateParams } from './provider.js';
 
 export class AnthropicProvider implements AIProvider {
   readonly name = 'anthropic';
   private client: Anthropic | null = null;
-  private model = config.ai.anthropicModel;
+
+  /** Model resolved live from the dashboard setting, else the env default. */
+  private get model(): string {
+    return store.getSetting('ai_model') || config.ai.anthropicModel;
+  }
 
   constructor() {
     if (config.ai.anthropicApiKey) {

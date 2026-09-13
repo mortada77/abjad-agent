@@ -18,7 +18,6 @@ import { logger } from '../logger.js';
 import { runtime } from '../runtime.js';
 import { store } from '../db/index.js';
 import { control, toJid } from '../control.js';
-import type { AIProvider } from '../ai/index.js';
 import { MessageProcessor } from './processor.js';
 import {
   handleOperatorCommand,
@@ -84,7 +83,7 @@ function phoneFromJid(jid: string): string {
   return jid.split('@')[0]?.split(':')[0] ?? jid;
 }
 
-export async function startWhatsApp(provider: AIProvider): Promise<void> {
+export async function startWhatsApp(): Promise<void> {
   fs.mkdirSync(config.paths.auth, { recursive: true });
 
   // Learned mapping from privacy @lid -> real phone JID (@s.whatsapp.net),
@@ -129,7 +128,7 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
   };
 
   const adminJid = config.admin.number ? toJid(config.admin.number) : null;
-  const processor = new MessageProcessor(provider, send, adminJid);
+  const processor = new MessageProcessor(send, adminJid);
 
   // Expose live capabilities to the dashboard.
   control.sendMessage = send;
@@ -329,7 +328,7 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
     if ('handled' in esc && esc.handled) return reply(`الطلب #${esc.id} تم التعامل معه مسبقاً.`);
     if (!body) return reply('اكتب القرار بعد رقم الطلب.');
 
-    const customerMsg = await composeDecision(body, provider);
+    const customerMsg = await composeDecision(body);
     try {
       await send(esc.jid, customerMsg);
       store.addMessage(esc.jid, 'assistant', customerMsg);
@@ -410,8 +409,10 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
       return;
     }
 
-    // Admin channel: your messages = control commands / decisions (not a customer).
-    if (isAdmin(jid)) {
+    // Admin channel: only commands (/...) and decisions (#id ...) are intercepted.
+    // Plain messages fall through to normal AI chat so you can talk to / test the
+    // agent from your own number and your saved instructions apply.
+    if (isAdmin(jid) && (body.startsWith('/') || /^#\d+/.test(body))) {
       await handleAdminMessage(jid, body);
       return;
     }

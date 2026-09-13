@@ -8,11 +8,11 @@ import { runtime } from '../runtime.js';
 import { store } from '../db/index.js';
 import { control } from '../control.js';
 import { pause, resume } from '../takeover/takeover.js';
-import type { AIProvider } from '../ai/index.js';
+import { activeProvider, activeProviderName, activeModel } from '../ai/index.js';
 import { generateInsight, suggestReply, analyzeTrends } from '../ai/insight.js';
 import { DASHBOARD_HTML } from './dashboard-html.js';
 
-export function startHealthServer(provider: AIProvider): void {
+export function startHealthServer(): void {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '256kb' }));
@@ -191,7 +191,7 @@ export function startHealthServer(provider: AIProvider): void {
     if (cached.insight && !refresh) {
       return res.json({ insight: JSON.parse(cached.insight), at: cached.insight_at, cached: true });
     }
-    const insight = await generateInsight(jid, provider);
+    const insight = await generateInsight(jid);
     if (!insight) return res.json({ insight: null });
     res.json({ insight, at: Date.now(), cached: false });
   });
@@ -199,11 +199,41 @@ export function startHealthServer(provider: AIProvider): void {
   api.post('/suggest', async (req, res) => {
     const jid = String(req.body?.jid || '');
     if (!jid) return res.status(400).json({ error: 'jid required' });
-    res.json({ text: await suggestReply(jid, provider) });
+    res.json({ text: await suggestReply(jid) });
   });
 
   api.get('/analyze-trends', async (_req, res) => {
-    res.json({ text: await analyzeTrends(provider) });
+    res.json({ text: await analyzeTrends() });
+  });
+
+  // ---- Model / provider selection (live, no rebuild) ----
+  api.get('/model', (_req, res) => {
+    res.json({
+      provider: activeProviderName(),
+      model: activeModel(),
+      ready: activeProvider().isReady(),
+      reason: activeProvider().notReadyReason(),
+      presets: {
+        openai: ['gpt-4o', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4o-mini', 'o4-mini'],
+        anthropic: ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'],
+      },
+    });
+  });
+  api.post('/model', (req, res) => {
+    const p = String(req.body?.provider || '').toLowerCase();
+    const m = String(req.body?.model || '').trim();
+    if (p && p !== 'openai' && p !== 'anthropic')
+      return res.status(400).json({ error: 'provider must be openai or anthropic' });
+    if (p) store.setSetting('ai_provider', p);
+    if (m) store.setSetting('ai_model', m);
+    logger.warn('[DASHBOARD] AI set to provider=%s model=%s', activeProviderName(), activeModel());
+    res.json({
+      ok: true,
+      provider: activeProviderName(),
+      model: activeModel(),
+      ready: activeProvider().isReady(),
+      reason: activeProvider().notReadyReason(),
+    });
   });
 
   // ---- Live instructions (editable persona knowledge) ----
@@ -243,10 +273,9 @@ function publicState() {
   return {
     app: 'abjad-agent',
     whatsapp: runtime.whatsapp,
-    aiProvider: runtime.aiProviderName,
-    aiModel:
-      config.ai.provider === 'openai' ? config.ai.openaiModel : config.ai.anthropicModel,
-    aiReady: runtime.aiReady,
+    aiProvider: activeProviderName(),
+    aiModel: activeModel(),
+    aiReady: activeProvider().isReady(),
     aiGloballyEnabled: control.aiGloballyEnabled,
     adminConfigured: Boolean(config.admin.number),
     lastDisconnect: runtime.lastDisconnect,

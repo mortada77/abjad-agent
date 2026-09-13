@@ -1,6 +1,6 @@
 import { logger } from '../logger.js';
 import { store } from '../db/index.js';
-import { getSystemPrompt, type AIProvider } from './index.js';
+import { getSystemPrompt, activeProvider } from './index.js';
 
 const STAGES = ['new', 'interested', 'trial', 'negotiation', 'subscribed', 'lost'];
 
@@ -42,10 +42,8 @@ function extractJson(text: string): any | null {
 }
 
 /** Analyse a customer's conversation into a structured sales insight (AI). */
-export async function generateInsight(
-  jid: string,
-  provider: AIProvider,
-): Promise<CustomerInsight | null> {
+export async function generateInsight(jid: string): Promise<CustomerInsight | null> {
+  const provider = activeProvider();
   if (!provider.isReady()) return null;
   const convo = transcript(jid);
   if (!convo.trim()) return null;
@@ -86,7 +84,8 @@ export async function generateInsight(
 }
 
 /** Suggest the next reply for the operator (not sent automatically). */
-export async function suggestReply(jid: string, provider: AIProvider): Promise<string> {
+export async function suggestReply(jid: string): Promise<string> {
+  const provider = activeProvider();
   if (!provider.isReady()) return '';
   const convo = transcript(jid);
   const system =
@@ -100,7 +99,8 @@ export async function suggestReply(jid: string, provider: AIProvider): Promise<s
 }
 
 /** Craft a friendly customer message conveying a management decision. */
-export async function composeDecision(decision: string, provider: AIProvider): Promise<string> {
+export async function composeDecision(decision: string): Promise<string> {
+  const provider = activeProvider();
   if (!provider.isReady()) return decision;
   const system =
     'أنت Abjad Agi. صُغ رسالة قصيرة ودّية باللهجة العراقية تبلّغ العميل بقرار الإدارة التالي بشكل مهذب. ' +
@@ -114,7 +114,8 @@ export async function composeDecision(decision: string, provider: AIProvider): P
 }
 
 /** Analyse recent traffic for top questions & objections (AI, on demand). */
-export async function analyzeTrends(provider: AIProvider): Promise<string> {
+export async function analyzeTrends(): Promise<string> {
+  const provider = activeProvider();
   if (!provider.isReady()) return 'مزود الذكاء غير جاهز.';
   const rows = store.raw
     .prepare(`SELECT content FROM messages WHERE role = 'user' ORDER BY id DESC LIMIT 200`)

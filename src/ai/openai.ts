@@ -1,11 +1,16 @@
 import OpenAI from 'openai';
 import { config } from '../config.js';
+import { store } from '../db/index.js';
 import type { AIProvider, GenerateParams } from './provider.js';
 
 export class OpenAIProvider implements AIProvider {
   readonly name = 'openai';
   private client: OpenAI | null = null;
-  private model = config.ai.openaiModel;
+
+  /** Model resolved live from the dashboard setting, else the env default. */
+  private get model(): string {
+    return store.getSetting('ai_model') || config.ai.openaiModel;
+  }
 
   constructor() {
     if (config.ai.openaiApiKey) {

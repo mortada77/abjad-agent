@@ -3,7 +3,7 @@ import { logger } from './logger.js';
 import { runtime } from './runtime.js';
 import { store } from './db/index.js'; // initialise DB early
 import { control } from './control.js';
-import { createProvider } from './ai/index.js';
+import { activeProvider, activeProviderName, activeModel } from './ai/index.js';
 import { startHealthServer } from './health/server.js';
 import { startWhatsApp } from './whatsapp/client.js';
 
@@ -23,16 +23,21 @@ async function main() {
   logger.info('[AI] global auto-reply: %s', control.aiGloballyEnabled ? 'ON' : 'OFF');
 
   // AI provider (never crashes if key missing — logs a clear error instead).
-  const provider = createProvider();
-  runtime.aiProviderName = provider.name;
+  const provider = activeProvider();
+  runtime.aiProviderName = activeProviderName();
   runtime.aiReady = provider.isReady();
+  if (provider.isReady()) {
+    logger.info('[AI] Provider ready: %s (model %s)', activeProviderName(), activeModel());
+  } else {
+    logger.error('[AI] Provider "%s" NOT ready: %s', activeProviderName(), provider.notReadyReason());
+  }
 
   // Dashboard + API + health server (always up).
-  startHealthServer(provider);
+  startHealthServer();
 
   // WhatsApp.
   try {
-    await startWhatsApp(provider);
+    await startWhatsApp();
   } catch (err) {
     logger.error('[WHATSAPP] failed to start: %s', (err as Error).message);
   }

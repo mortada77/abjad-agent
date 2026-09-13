@@ -38,6 +38,33 @@ export function getSystemPrompt(): string {
   return basePrompt() + extraBlock + ESCALATION_PROTOCOL;
 }
 
+let _anthropic: AnthropicProvider | null = null;
+let _openai: OpenAIProvider | null = null;
+
+/** Provider name active right now (dashboard setting overrides env). */
+export function activeProviderName(): string {
+  return (store.getSetting('ai_provider') || config.ai.provider || 'openai').toLowerCase();
+}
+
+/** The provider instance to use for the current request (resolved live). */
+export function activeProvider(): AIProvider {
+  if (activeProviderName() === 'anthropic') {
+    _anthropic ??= new AnthropicProvider();
+    return _anthropic;
+  }
+  _openai ??= new OpenAIProvider();
+  return _openai;
+}
+
+/** Model string active right now. */
+export function activeModel(): string {
+  const p = activeProviderName();
+  return (
+    store.getSetting('ai_model') ||
+    (p === 'anthropic' ? config.ai.anthropicModel : config.ai.openaiModel)
+  );
+}
+
 export function createProvider(): AIProvider {
   const which = config.ai.provider;
   let provider: AIProvider;

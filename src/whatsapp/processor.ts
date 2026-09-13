@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { store } from '../db/index.js';
-import { getSystemPrompt, type AIProvider } from '../ai/index.js';
+import { getSystemPrompt, activeProvider } from '../ai/index.js';
 import { buildContext, maybeSummarize } from '../memory/conversation.js';
 import { isAiActive, pause } from '../takeover/takeover.js';
 import { parseEscalation } from '../escalation.js';
@@ -27,7 +27,6 @@ export class MessageProcessor {
   private globalLimiter = new Semaphore(config.ai.maxConcurrency);
 
   constructor(
-    private readonly provider: AIProvider,
     private readonly send: SendReply,
     private readonly adminJid: string | null,
   ) {}
@@ -65,12 +64,13 @@ export class MessageProcessor {
         logger.info('[AI] Skipping reply for %s (human mode active)', jid);
         return;
       }
-      if (!this.provider.isReady()) {
+      const provider = activeProvider();
+      if (!provider.isReady()) {
         logger.error(
           '[AI] Cannot reply to %s: provider "%s" not ready (%s)',
           jid,
-          this.provider.name,
-          this.provider.notReadyReason(),
+          provider.name,
+          provider.notReadyReason(),
         );
         return;
       }
@@ -96,7 +96,7 @@ export class MessageProcessor {
       }
 
       // Fold older history into a summary if it has grown (best-effort).
-      void maybeSummarize(jid, this.provider);
+      void maybeSummarize(jid);
     } catch (err) {
       logger.error('[AI] Failed to handle message for %s: %s', jid, (err as Error).message);
     } finally {
@@ -152,7 +152,7 @@ export class MessageProcessor {
       const reply = await retry(
         () =>
           withTimeout(
-            this.provider.generateReply({ system, history, user: userText }),
+            activeProvider().generateReply({ system, history, user: userText }),
             config.ai.timeoutMs,
             'AI request',
           ),

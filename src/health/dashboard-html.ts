@@ -203,6 +203,20 @@ button:not(.sec):not(.bad){box-shadow:0 0 16px rgba(47,107,255,.55)}
       </div>
     </div>
     <div class="card" style="margin-top:14px">
+      <h3>🧠 نموذج الذكاء</h3>
+      <p class="muted">اختر المزوّد والنموذج — يتطبّق فوراً على ردود الوكيل بدون إعادة نشر.</p>
+      <div class="row">
+        <select id="mProvider" onchange="onProviderChange()" style="max-width:170px">
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic (Claude)</option>
+        </select>
+        <select id="mPreset" onchange="document.getElementById('mModel').value=this.value" style="max-width:200px"></select>
+        <input id="mModel" placeholder="اسم النموذج" style="max-width:230px"/>
+        <button onclick="saveModel()">حفظ النموذج</button>
+      </div>
+      <p id="mMsg" class="muted"></p>
+    </div>
+    <div class="card" style="margin-top:14px">
       <h3>🎨 خلفية الواجهة</h3>
       <p class="muted">اختر نمط الخلفية المتحركة (أو أوقفها لخلفية ثابتة).</p>
       <div class="nav" id="bgOpts"></div>
@@ -351,10 +365,21 @@ api("/analyze-trends").then(function(r){document.getElementById("trends").textCo
 function loadInstr(){api("/instructions").then(function(r){document.getElementById("instr").value=r.text||"";}).catch(handleErr);}
 function saveInstr(){post("/instructions",{text:document.getElementById("instr").value}).then(function(){var m=document.getElementById("instrMsg");m.textContent="✅ تم الحفظ";setTimeout(function(){m.textContent="";},2500);}).catch(handleErr);}
 
+var _presets={};
+function loadModel(){api("/model").then(function(r){_presets=r.presets||{};
+document.getElementById("mProvider").value=r.provider;fillPresets(r.provider);
+document.getElementById("mModel").value=r.model;
+document.getElementById("mMsg").textContent=r.ready?("الحالي: "+r.provider+" / "+r.model+" ✓"):("غير جاهز: "+(r.reason||""));}).catch(handleErr);}
+function fillPresets(p){var list=_presets[p]||[];var ps=document.getElementById("mPreset");ps.innerHTML="";
+list.forEach(function(m){var o=document.createElement("option");o.value=m;o.textContent=m;ps.appendChild(o);});}
+function onProviderChange(){var p=document.getElementById("mProvider").value;fillPresets(p);var l=_presets[p]||[];if(l[0])document.getElementById("mModel").value=l[0];}
+function saveModel(){post("/model",{provider:document.getElementById("mProvider").value,model:document.getElementById("mModel").value.trim()}).then(function(r){
+document.getElementById("mMsg").textContent=r.ready?("✅ تم: "+r.provider+" / "+r.model):("⚠️ محفوظ بس "+(r.reason||"غير جاهز"));refreshState();}).catch(handleErr);}
+
 function showView(v){["work","ana","know","sys"].forEach(function(x){
 document.getElementById("view-"+x).classList.toggle("hide",x!==v);
 document.getElementById("nav-"+x).classList.toggle("on",x===v);});
-if(v==="ana")loadAnalytics();if(v==="know")loadInstr();if(v==="sys"){loadLogs();refreshQR();}}
+if(v==="ana")loadAnalytics();if(v==="know")loadInstr();if(v==="sys"){loadLogs();refreshQR();loadModel();}}
 
 /* ---------- animated background ---------- */
 var BGMODES=[["stars","✨ نجوم"],["particles","🔗 جسيمات"],["grid","▦ شبكة"],["waves","〜 أمواج"],["aurora","🌌 شفق"],["off","■ بدون (ثابت)"]];

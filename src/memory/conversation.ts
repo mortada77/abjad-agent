@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { store, type ChatTurn } from '../db/index.js';
-import type { AIProvider } from '../ai/index.js';
+import { activeProvider } from '../ai/index.js';
 
 /**
  * Builds a bounded context for the model:
@@ -23,8 +23,9 @@ export function buildContext(jid: string): { systemSuffix: string; history: Chat
  * the running summary. Best-effort: any failure is logged and swallowed so it
  * never blocks a reply.
  */
-export async function maybeSummarize(jid: string, provider: AIProvider): Promise<void> {
+export async function maybeSummarize(jid: string): Promise<void> {
   try {
+    const provider = activeProvider();
     const total = store.countMessages(jid);
     if (total < config.memory.summaryTriggerMessages) return;
     if (!provider.isReady()) return;
