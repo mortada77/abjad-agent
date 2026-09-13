@@ -14,6 +14,8 @@ interface Runtime {
   /** Current pairing QR string (only set while waiting_qr). */
   currentQR: string | null;
   reconnectAttempts: number;
+  /** Name of the last disconnect reason (for diagnostics). */
+  lastDisconnect: string | null;
 }
 
 export const runtime: Runtime = {
@@ -23,4 +25,5 @@ export const runtime: Runtime = {
   aiProviderName: 'unknown',
   currentQR: null,
   reconnectAttempts: 0,
+  lastDisconnect: null,
 };

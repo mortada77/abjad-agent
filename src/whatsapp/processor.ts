@@ -3,7 +3,8 @@ import { logger } from '../logger.js';
 import { store } from '../db/index.js';
 import { getSystemPrompt, type AIProvider } from '../ai/index.js';
 import { buildContext, maybeSummarize } from '../memory/conversation.js';
-import { isAiActive } from '../takeover/takeover.js';
+import { isAiActive, pause } from '../takeover/takeover.js';
+import { parseEscalation } from '../escalation.js';
 import { retry, withTimeout, Semaphore } from '../util.js';
 
 export type SendReply = (jid: string, text: string) => Promise<void>;
@@ -28,6 +29,7 @@ export class MessageProcessor {
   constructor(
     private readonly provider: AIProvider,
     private readonly send: SendReply,
+    private readonly adminJid: string | null,
   ) {}
 
   /** Queue an incoming user message for a contact (applies debounce). */
@@ -74,15 +76,27 @@ export class MessageProcessor {
       }
 
       const reply = await this.generate(jid, combined);
-      if (reply) {
-        await this.send(jid, reply);
-        store.addMessage(jid, 'assistant', reply);
-        logger.info('[WHATSAPP] reply sent to %s', jid);
-        // Fold older history into a summary if it has grown (best-effort).
-        void maybeSummarize(jid, this.provider);
-      } else {
+      if (!reply) {
         logger.warn('[AI] Empty reply for %s', jid);
+        return;
       }
+
+      const esc = parseEscalation(reply);
+      const customerText = esc
+        ? esc.cleanReply ||
+          'شكراً إلك 🙏 راح أتواصل مع الإدارة بخصوص طلبك وأرجعلك بأقرب وقت.'
+        : reply;
+
+      await this.send(jid, customerText);
+      store.addMessage(jid, 'assistant', customerText);
+      logger.info('[WHATSAPP] reply sent to %s', jid);
+
+      if (esc) {
+        await this.handleEscalation(jid, esc.reason, combined);
+      }
+
+      // Fold older history into a summary if it has grown (best-effort).
+      void maybeSummarize(jid, this.provider);
     } catch (err) {
       logger.error('[AI] Failed to handle message for %s: %s', jid, (err as Error).message);
     } finally {
@@ -91,6 +105,36 @@ export class MessageProcessor {
       if (st.buffer.length > 0) {
         st.timer = setTimeout(() => void this.flush(jid), config.whatsapp.debounceMs);
       }
+    }
+  }
+
+  /** A management decision is needed: notify the admin, log it, pause AI. */
+  private async handleEscalation(jid: string, reason: string, lastMsg: string): Promise<void> {
+    const contact = store.getContact(jid);
+    const name = contact?.display_name ?? null;
+    const phone = contact?.phone ?? null;
+
+    store.addEscalation({ jid, name, phone, reason, lastMsg });
+    logger.warn('[ESCALATE] %s (%s): %s', name ?? phone ?? jid, phone ?? '', reason);
+
+    // Pause AI for this contact so the operator can take over.
+    pause(jid);
+
+    if (this.adminJid) {
+      const who = name ? `${name} (${phone ?? ''})` : phone ?? jid;
+      const note =
+        `🔔 *مرتضى، محتاج قرارك*\n\n` +
+        `👤 العميل: ${who}\n` +
+        `📌 الطلب: ${reason}\n` +
+        `💬 آخر رسالة: "${lastMsg}"\n\n` +
+        `الرد التلقائي متوقف لهذا العميل. افتح محادثته وردّ يدوياً، وبعدها اكتب /resume بمحادثته لإرجاع الرد التلقائي.`;
+      try {
+        await this.send(this.adminJid, note);
+      } catch (err) {
+        logger.error('[ESCALATE] failed to notify admin: %s', (err as Error).message);
+      }
+    } else {
+      logger.warn('[ESCALATE] ADMIN_NUMBER not set — no notification sent');
     }
   }
 

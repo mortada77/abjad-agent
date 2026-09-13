@@ -54,6 +54,23 @@ db.exec(`
     updated_at     INTEGER NOT NULL,
     FOREIGN KEY (jid) REFERENCES contacts(jid) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS escalations (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    jid        TEXT NOT NULL,
+    name       TEXT,
+    phone      TEXT,
+    reason     TEXT,
+    last_msg   TEXT,
+    handled    INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_escalations_created ON escalations(created_at DESC);
 `);
 
 logger.info('[DB] SQLite ready at %s', config.paths.db);
@@ -91,6 +108,28 @@ const stmtUpsertConvState = db.prepare(`
   ON CONFLICT(jid) DO UPDATE SET
     summary = @summary, summarized_upto = @summarized_upto, updated_at = @now
 `);
+const stmtListContacts = db.prepare(`
+  SELECT jid, phone, display_name, state, human_until, last_seen
+  FROM contacts ORDER BY last_seen DESC LIMIT ?
+`);
+const stmtConversation = db.prepare(`
+  SELECT role, content, created_at FROM messages
+  WHERE jid = ? ORDER BY id DESC LIMIT ?
+`);
+const stmtGetSetting = db.prepare(`SELECT value FROM settings WHERE key = ?`);
+const stmtSetSetting = db.prepare(`
+  INSERT INTO settings (key, value) VALUES (?, ?)
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value
+`);
+const stmtAddEscalation = db.prepare(`
+  INSERT INTO escalations (jid, name, phone, reason, last_msg, created_at)
+  VALUES (@jid, @name, @phone, @reason, @last_msg, @now)
+`);
+const stmtListEscalations = db.prepare(`
+  SELECT id, jid, name, phone, reason, last_msg, handled, created_at
+  FROM escalations ORDER BY id DESC LIMIT ?
+`);
+const stmtHandleEscalation = db.prepare(`UPDATE escalations SET handled = 1 WHERE id = ?`);
 
 export interface ContactRow {
   jid: string;
@@ -173,6 +212,69 @@ export const store = {
       summarized_upto: summarizedUpto,
       now: Date.now(),
     });
+  },
+
+  listContacts(limit = 100) {
+    return stmtListContacts.all(limit) as {
+      jid: string;
+      phone: string | null;
+      display_name: string | null;
+      state: ContactState;
+      human_until: number | null;
+      last_seen: number;
+    }[];
+  },
+
+  conversation(jid: string, limit = 50) {
+    const rows = stmtConversation.all(jid, limit) as {
+      role: string;
+      content: string;
+      created_at: number;
+    }[];
+    return rows.reverse();
+  },
+
+  getSetting(key: string): string | null {
+    const row = stmtGetSetting.get(key) as { value: string } | undefined;
+    return row?.value ?? null;
+  },
+
+  setSetting(key: string, value: string) {
+    stmtSetSetting.run(key, value);
+  },
+
+  addEscalation(e: {
+    jid: string;
+    name: string | null;
+    phone: string | null;
+    reason: string;
+    lastMsg: string;
+  }) {
+    stmtAddEscalation.run({
+      jid: e.jid,
+      name: e.name,
+      phone: e.phone,
+      reason: e.reason,
+      last_msg: e.lastMsg,
+      now: Date.now(),
+    });
+  },
+
+  listEscalations(limit = 50) {
+    return stmtListEscalations.all(limit) as {
+      id: number;
+      jid: string;
+      name: string | null;
+      phone: string | null;
+      reason: string;
+      last_msg: string;
+      handled: number;
+      created_at: number;
+    }[];
+  },
+
+  markEscalationHandled(id: number) {
+    stmtHandleEscalation.run(id);
   },
 };
 

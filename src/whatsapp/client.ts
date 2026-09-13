@@ -16,6 +16,7 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { runtime } from '../runtime.js';
 import { store } from '../db/index.js';
+import { control, toJid } from '../control.js';
 import type { AIProvider } from '../ai/index.js';
 import { MessageProcessor } from './processor.js';
 import {
@@ -24,6 +25,17 @@ import {
   isAiActive,
 } from '../takeover/takeover.js';
 import { sleep } from '../util.js';
+
+// Note: some DisconnectReason values share the same numeric code
+// (connectionLost and timedOut are both 408), so build without duplicate keys.
+const disconnectName: Record<number, string> = {
+  [DisconnectReason.badSession]: 'badSession',
+  [DisconnectReason.connectionClosed]: 'connectionClosed',
+  [DisconnectReason.connectionLost]: 'connectionLost/timedOut',
+  [DisconnectReason.connectionReplaced]: 'connectionReplaced',
+  [DisconnectReason.loggedOut]: 'loggedOut',
+  [DisconnectReason.restartRequired]: 'restartRequired',
+};
 
 // Baileys is chatty; give it its own silent-ish logger.
 const waLogger = pino({ level: 'warn' });
@@ -71,7 +83,30 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
     rememberSent(res?.key?.id ?? undefined);
   };
 
-  const processor = new MessageProcessor(provider, send);
+  const adminJid = config.admin.number ? toJid(config.admin.number) : null;
+  const processor = new MessageProcessor(provider, send, adminJid);
+
+  // Expose live capabilities to the dashboard.
+  control.sendMessage = send;
+  control.resetSession = async () => {
+    logger.warn('[WHATSAPP] resetSession requested from dashboard');
+    try {
+      await sock?.logout();
+    } catch {
+      /* ignore — may already be disconnected */
+    }
+    try {
+      fs.rmSync(config.paths.auth, { recursive: true, force: true });
+      fs.mkdirSync(config.paths.auth, { recursive: true });
+    } catch (err) {
+      logger.error('[WHATSAPP] failed to clear auth: %s', (err as Error).message);
+    }
+    runtime.whatsapp = 'connecting';
+    runtime.currentQR = null;
+    await connect().catch((e) =>
+      logger.error('[WHATSAPP] reconnect after reset failed: %s', (e as Error).message),
+    );
+  };
 
   const connect = async (): Promise<void> => {
     const { state, saveCreds } = await useMultiFileAuthState(config.paths.auth);
@@ -116,7 +151,10 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
 
       if (connection === 'close') {
         const statusCode = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
+        const reasonName = statusCode ? disconnectName[statusCode] ?? String(statusCode) : 'unknown';
         runtime.currentQR = null;
+        runtime.lastDisconnect = reasonName;
+        logger.warn('[WHATSAPP] connection closed. reason=%s (code=%s)', reasonName, statusCode);
 
         if (statusCode === DisconnectReason.loggedOut) {
           // Session ended permanently — DO NOT loop. Require manual re-pairing.
@@ -197,6 +235,11 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
     store.upsertContact(jid, phoneFromJid(jid), pushName);
     store.addMessage(jid, 'user', text, msgId);
     logger.info('[WHATSAPP] message received from %s', phoneFromJid(jid));
+
+    if (!control.aiGloballyEnabled) {
+      logger.info('[AI] global auto-reply is OFF — not replying to %s', jid);
+      return;
+    }
 
     if (!isAiActive(jid)) {
       logger.info('[AI] contact %s in human mode — not replying', jid);

@@ -1,7 +1,8 @@
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { runtime } from './runtime.js';
-import './db/index.js'; // initialise DB early
+import { store } from './db/index.js'; // initialise DB early
+import { control } from './control.js';
 import { createProvider } from './ai/index.js';
 import { startHealthServer } from './health/server.js';
 import { startWhatsApp } from './whatsapp/client.js';
@@ -15,6 +16,11 @@ async function main() {
   if (config.http.pairingToken === 'change-me-to-a-random-string') {
     logger.warn('[SECURITY] PAIRING_TOKEN is still the default. Set a random value in your env.');
   }
+
+  // Restore the global auto-reply kill switch from DB.
+  const saved = store.getSetting('ai_enabled');
+  if (saved !== null) control.aiGloballyEnabled = saved === '1';
+  logger.info('[AI] global auto-reply: %s', control.aiGloballyEnabled ? 'ON' : 'OFF');
 
   // AI provider (never crashes if key missing — logs a clear error instead).
   const provider = createProvider();

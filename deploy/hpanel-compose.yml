@@ -10,6 +10,7 @@ services:
   abjad-agent:
     # Prebuilt image published by GitHub Actions (hPanel pulls it, no build).
     image: ghcr.io/mortada77/abjad-agent:latest
+    pull_policy: always          # always pull the newest image on redeploy
     container_name: abjad-agent
     restart: unless-stopped
     ports:
@@ -19,10 +20,12 @@ services:
       AI_PROVIDER: openai
       # >>> PASTE YOUR OpenAI API KEY (starts with sk-...) between the quotes:
       OPENAI_API_KEY: ""
-      OPENAI_MODEL: gpt-4o-mini
+      OPENAI_MODEL: gpt-4o          # smarter than gpt-4o-mini (better Iraqi Arabic)
       # (Anthropic left empty; switch AI_PROVIDER to "anthropic" to use it)
       ANTHROPIC_API_KEY: ""
       ANTHROPIC_MODEL: claude-opus-5
+      # >>> YOUR personal WhatsApp number for escalation alerts (digits, country code, NO +):
+      ADMIN_NUMBER: ""
       # ---- AI limits (keep cost low) ----
       AI_MAX_TOKENS: "700"
       AI_TIMEOUT_MS: "45000"

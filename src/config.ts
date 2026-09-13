@@ -40,6 +40,14 @@ export const config = {
     timeoutMs: int('AI_TIMEOUT_MS', 45000),
     maxRetries: int('AI_MAX_RETRIES', 2),
     maxConcurrency: int('AI_MAX_CONCURRENCY', 3),
+    // Optional: override the persona file without rebuilding the image.
+    systemPromptOverride: str('SYSTEM_PROMPT'),
+  },
+
+  admin: {
+    // Your personal WhatsApp number (digits incl. country code, NO +),
+    // e.g. 9647801234567. Escalation notifications are sent here.
+    number: str('ADMIN_NUMBER'),
   },
 
   memory: {
