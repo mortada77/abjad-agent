@@ -21,6 +21,7 @@ import { control } from '../control.js';
 import { MessageProcessor } from './processor.js';
 import { handleOperatorCommand, onOperatorManualMessage, isAiActive } from '../takeover/takeover.js';
 import { sleep } from '../util.js';
+import { handleAdminWhatsApp } from './admin.js';
 
 // Note: some DisconnectReason values share the same numeric code
 // (connectionLost and timedOut are both 408), so build without duplicate keys.
@@ -66,6 +67,11 @@ function extractText(msg: proto.IWebMessageInfo): string | null {
 
 function phoneFromJid(jid: string): string {
   return jid.split('@')[0]?.split(':')[0] ?? jid;
+}
+
+function isAdminJid(jid: string): boolean {
+  const admin = config.admin.number.replace(/\D/g, '');
+  return Boolean(admin) && phoneFromJid(jid).replace(/\D/g, '') === admin;
 }
 
 export async function startWhatsApp(): Promise<void> {
@@ -281,6 +287,11 @@ export async function startWhatsApp(): Promise<void> {
     if (key.fromMe) {
       // Echo of the bot's own reply -> ignore completely.
       if (sentByBot.has(msgId)) return;
+      // A message sent to the owner's own chat is the private Executive AI channel.
+      if (text && isAdminJid(jid)) {
+        await handleAdminWhatsApp(text, jid, send);
+        return;
+      }
       // A manual message typed by the operator from the phone/app.
       if (!text) return;
       const cmd = handleOperatorCommand(jid, text);
@@ -301,9 +312,13 @@ export async function startWhatsApp(): Promise<void> {
 
     if (!text || !text.trim()) return; // no supported text content (image/doc handled later)
 
-    // WhatsApp is marketing/sales only: EVERY sender (including the owner's own
-    // number) is treated as a customer. Owner control lives in the dashboard
-    // Executive AI, never over WhatsApp.
+    // The configured owner gets the Executive AI, never the marketing persona.
+    if (isAdminJid(jid)) {
+      await handleAdminWhatsApp(text, jid, send);
+      return;
+    }
+
+    // Every non-admin sender remains in the marketing/sales pipeline.
     const pushName = msg.pushName ?? null;
     store.upsertContact(jid, phoneFromJid(jid), pushName);
     store.addMessage(jid, 'user', text, msgId);

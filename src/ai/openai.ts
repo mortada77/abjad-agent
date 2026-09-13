@@ -44,9 +44,9 @@ export class OpenAIProvider implements AIProvider {
 
     const res = await this.client.chat.completions.create({
       model: this.model,
-      max_tokens: config.ai.maxTokens,
+      max_completion_tokens: config.ai.maxTokens,
       messages,
-    });
+    } as any);
 
     return (res.choices[0]?.message?.content ?? '').trim();
   }
@@ -55,12 +55,12 @@ export class OpenAIProvider implements AIProvider {
     if (!this.client) throw new Error('OpenAI provider not configured');
     const res = await this.client.chat.completions.create({
       model: this.model,
-      max_tokens: 400,
+      max_completion_tokens: 400,
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: conversationText },
       ],
-    });
+    } as any);
     return (res.choices[0]?.message?.content ?? '').trim();
   }
 
@@ -81,11 +81,11 @@ export class OpenAIProvider implements AIProvider {
     for (let round = 0; round < maxRounds; round++) {
       const res = await this.client.chat.completions.create({
         model: this.model,
-        max_tokens: config.ai.maxTokens,
+        max_completion_tokens: config.ai.maxTokens,
         messages,
         tools,
         tool_choice: 'auto',
-      });
+      } as any);
       const msg = res.choices[0]?.message;
       if (!msg) break;
       if (msg.tool_calls && msg.tool_calls.length > 0) {

@@ -20,7 +20,7 @@ services:
       AI_PROVIDER: openai
       # >>> PASTE YOUR OpenAI API KEY (starts with sk-...) between the quotes:
       OPENAI_API_KEY: ""
-      OPENAI_MODEL: gpt-4o          # smarter than gpt-4o-mini (better Iraqi Arabic)
+      OPENAI_MODEL: gpt-5.5         # premium customer-facing and executive quality
       # (Anthropic left empty; switch AI_PROVIDER to "anthropic" to use it)
       ANTHROPIC_API_KEY: ""
       ANTHROPIC_MODEL: claude-opus-5

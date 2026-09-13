@@ -35,7 +35,7 @@ export const config = {
     anthropicApiKey: str('ANTHROPIC_API_KEY'),
     anthropicModel: str('ANTHROPIC_MODEL', 'claude-opus-5'),
     openaiApiKey: str('OPENAI_API_KEY'),
-    openaiModel: str('OPENAI_MODEL', 'gpt-4o-mini'),
+    openaiModel: str('OPENAI_MODEL', 'gpt-5.5'),
     maxTokens: int('AI_MAX_TOKENS', 700),
     timeoutMs: int('AI_TIMEOUT_MS', 45000),
     maxRetries: int('AI_MAX_RETRIES', 2),

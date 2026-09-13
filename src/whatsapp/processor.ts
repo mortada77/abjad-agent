@@ -6,6 +6,7 @@ import { buildContext, maybeSummarize } from '../memory/conversation.js';
 import { isAiActive, pause } from '../takeover/takeover.js';
 import { parseEscalation } from '../escalation.js';
 import { retry, withTimeout, Semaphore } from '../util.js';
+import { toJid } from '../control.js';
 
 export type SendReply = (jid: string, text: string) => Promise<void>;
 
@@ -116,6 +117,23 @@ export class MessageProcessor {
 
     // Pause AI for this contact so a human can take over from the dashboard.
     pause(jid);
+
+    if (config.admin.number) {
+      const who = name || phone || jid.split('@')[0];
+      const notice =
+        `🔔 قرار إدارة مطلوب — #${id}\n` +
+        `العميل: ${who}\n` +
+        `السبب: ${reason}\n` +
+        `آخر رسالة: ${lastMsg}\n\n` +
+        `جاوب بهذا الشكل:\nرد ${id}: قرارك هنا`;
+      try {
+        await this.send(toJid(config.admin.number), notice);
+      } catch (err) {
+        logger.error('[ESCALATE] Failed to notify admin for #%d: %s', id, (err as Error).message);
+      }
+    } else {
+      logger.warn('[ESCALATE] ADMIN_NUMBER is not configured; #%d is dashboard-only', id);
+    }
   }
 
   private async generate(jid: string, userText: string): Promise<string> {
