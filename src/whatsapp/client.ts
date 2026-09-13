@@ -200,11 +200,25 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
         logger.warn('[WHATSAPP] connection closed. reason=%s (code=%s)', reasonName, statusCode);
 
         if (statusCode === DisconnectReason.loggedOut) {
-          // Session ended permanently — DO NOT loop. Require manual re-pairing.
+          // Session ended: clear it and come back with a fresh QR automatically.
           runtime.whatsapp = 'logged_out';
-          logger.error(
-            '[WHATSAPP] Logged out. The session is no longer valid. ' +
-              'To re-pair: stop the container, clear the whatsapp-auth volume, start again, and scan the QR at /qr.',
+          logger.error('[WHATSAPP] Logged out — clearing session and generating a new QR.');
+          try {
+            sock?.ev.removeAllListeners('connection.update');
+          } catch {
+            /* ignore */
+          }
+          try {
+            fs.rmSync(config.paths.auth, { recursive: true, force: true });
+            fs.mkdirSync(config.paths.auth, { recursive: true });
+          } catch (err) {
+            logger.error('[WHATSAPP] failed to clear auth: %s', (err as Error).message);
+          }
+          await sleep(2000);
+          runtime.whatsapp = 'connecting';
+          runtime.currentQR = null;
+          await connect().catch((e) =>
+            logger.error('[WHATSAPP] re-auth reconnect failed: %s', (e as Error).message),
           );
           return;
         }
@@ -316,8 +330,10 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
   }
 
   async function handleIncoming(msg: proto.IWebMessageInfo): Promise<void> {
-    const rawJid = msg.key.remoteJid;
-    const msgId = msg.key.id;
+    const key = msg.key;
+    if (!key) return;
+    const rawJid = key.remoteJid;
+    const msgId = key.id;
     if (!rawJid || !msgId) return;
 
     // Ignore status broadcasts and (optionally) groups.
@@ -327,7 +343,7 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
 
     // Prefer the real phone-number JID over the privacy @lid, so replies deliver.
     // WhatsApp carries it in senderPn / participantPn / remoteJidAlt.
-    const k = msg.key as any;
+    const k = key as any;
     const altPn: string | undefined = k.senderPn || k.participantPn || k.remoteJidAlt;
     const senderLid: string | undefined = k.senderLid || k.participantLid;
     if (altPn && altPn.endsWith('@s.whatsapp.net')) {
@@ -337,13 +353,13 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
     const jid =
       rawJid.endsWith('@lid') && altPn && altPn.endsWith('@s.whatsapp.net') ? altPn : rawJid;
     if (rawJid.endsWith('@lid') && jid === rawJid) {
-      logger.warn('[WHATSAPP] @lid chat, no PN resolved (key: %s)', Object.keys(msg.key).join(','));
+      logger.warn('[WHATSAPP] @lid chat, no PN resolved (key: %s)', Object.keys(k).join(','));
     }
 
     const text = extractText(msg);
 
     // Messages sent from this account (fromMe):
-    if (msg.key.fromMe) {
+    if (key.fromMe) {
       // Echo of the bot's own reply -> ignore completely.
       if (sentByBot.has(msgId)) return;
       // A manual message typed by the operator from the phone/app.
