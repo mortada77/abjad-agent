@@ -5,33 +5,37 @@ import type { AIProvider } from './provider.js';
 import { AnthropicProvider } from './anthropic.js';
 import { OpenAIProvider } from './openai.js';
 import { ESCALATION_PROTOCOL } from '../escalation.js';
+import { store } from '../db/index.js';
 
 export * from './provider.js';
 
-let cachedSystemPrompt: string | null = null;
+let cachedBase: string | null = null;
 
-/**
- * The Abjad Agi persona. Source order:
- *   1. SYSTEM_PROMPT env var (lets you tune wording in hPanel without a rebuild)
- *   2. prompts/system-prompt.txt (baked into the image)
- * The fixed escalation protocol is always appended so its contract never breaks.
- */
-export function getSystemPrompt(): string {
-  if (cachedSystemPrompt !== null) return cachedSystemPrompt;
-  let base: string;
+function basePrompt(): string {
+  if (cachedBase !== null) return cachedBase;
   if (config.ai.systemPromptOverride) {
-    base = config.ai.systemPromptOverride.trim();
+    cachedBase = config.ai.systemPromptOverride.trim();
     logger.info('[AI] Using SYSTEM_PROMPT from environment');
   } else {
     try {
-      base = fs.readFileSync(config.paths.systemPrompt, 'utf8').trim();
+      cachedBase = fs.readFileSync(config.paths.systemPrompt, 'utf8').trim();
     } catch (err) {
       logger.error('[AI] Failed to read system prompt file: %s', (err as Error).message);
-      base = 'You are Abjad Agi, the AI assistant for the Abjad team.';
+      cachedBase = 'You are Abjad Agi, the AI assistant for the Abjad team.';
     }
   }
-  cachedSystemPrompt = base + ESCALATION_PROTOCOL;
-  return cachedSystemPrompt;
+  return cachedBase;
+}
+
+/**
+ * Full persona = base persona + live "extra instructions" (editable from the
+ * dashboard, stored in DB, no rebuild needed) + the fixed escalation protocol
+ * (always last so its contract can't be broken by edited instructions).
+ */
+export function getSystemPrompt(): string {
+  const extra = store.getSetting('extra_instructions');
+  const extraBlock = extra && extra.trim() ? `\n\n## تعليمات إضافية من الإدارة\n${extra.trim()}` : '';
+  return basePrompt() + extraBlock + ESCALATION_PROTOCOL;
 }
 
 export function createProvider(): AIProvider {

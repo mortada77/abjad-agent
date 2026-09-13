@@ -23,8 +23,19 @@ import {
   handleOperatorCommand,
   onOperatorManualMessage,
   isAiActive,
+  resume,
 } from '../takeover/takeover.js';
+import { composeDecision } from '../ai/insight.js';
 import { sleep } from '../util.js';
+
+/** Compare two numbers by their last 10 digits (tolerates local vs intl format). */
+function sameNumber(a: string, b: string): boolean {
+  const da = a.replace(/\D/g, '');
+  const db = b.replace(/\D/g, '');
+  if (!da || !db) return false;
+  const n = 10;
+  return da.slice(-n) === db.slice(-n);
+}
 
 // Note: some DisconnectReason values share the same numeric code
 // (connectionLost and timedOut are both 408), so build without duplicate keys.
@@ -209,6 +220,76 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
     });
   };
 
+  async function handleAdminMessage(text: string): Promise<void> {
+    const reply = (t: string) => send(adminJid!, t);
+
+    if (text.startsWith('/')) {
+      const [cmd, ...rest] = text.split(/\s+/);
+      const arg = rest.join(' ').trim();
+      switch (cmd) {
+        case '/help':
+          return reply(
+            'أوامر التحكم:\n' +
+              '• ردّ بالقرار مباشرة (أو ابدأ بـ #رقم_الطلب) وأنا أوصله للعميل.\n' +
+              '/pending — الطلبات المعلّقة\n' +
+              '/status — حالة النظام\n' +
+              '/note <نص> — إضافة تعليمة دائمة للبوت\n' +
+              '/help — هذه القائمة',
+          );
+        case '/status':
+          return reply(
+            `الحالة: واتساب=${runtime.whatsapp} · AI=${runtime.aiReady ? 'جاهز' : 'غير جاهز'} (${runtime.aiProviderName})\n` +
+              `الرد التلقائي: ${control.aiGloballyEnabled ? 'يعمل' : 'متوقف'}`,
+          );
+        case '/pending': {
+          const list = store.listUnhandledEscalations(10);
+          if (list.length === 0) return reply('ما عندك طلبات معلّقة 👍');
+          return reply(
+            'الطلبات المعلّقة:\n' +
+              list
+                .map((e) => `#${e.id} — ${e.name || e.phone || e.jid}: ${e.reason}`)
+                .join('\n') +
+              '\n\nردّ بالقرار وابدأ بـ #الرقم.',
+          );
+        }
+        case '/note':
+          if (!arg) return reply('اكتب التعليمة بعد /note');
+          {
+            const cur = store.getSetting('extra_instructions') || '';
+            store.setSetting('extra_instructions', (cur + '\n- ' + arg).trim());
+          }
+          return reply('✅ تم إضافة التعليمة للبوت (فعّالة فوراً).');
+        default:
+          return reply('أمر غير معروف. اكتب /help');
+      }
+    }
+
+    // Not a command -> a decision to relay to a pending customer.
+    let id: number | null = null;
+    let body = text;
+    const m = text.match(/^#(\d+)\s*([\s\S]*)$/);
+    if (m) {
+      id = Number(m[1]);
+      body = m[2].trim();
+    }
+    const esc = id ? store.getEscalation(id) : store.listUnhandledEscalations(1)[0];
+    if (!esc) return reply('ما عندي طلب معلّق حالياً. اكتب /pending للقائمة.');
+    if ('handled' in esc && esc.handled) return reply(`الطلب #${esc.id} تم التعامل معه مسبقاً.`);
+    if (!body) return reply('اكتب القرار بعد رقم الطلب.');
+
+    const customerMsg = await composeDecision(body, provider);
+    try {
+      await send(esc.jid, customerMsg);
+      store.addMessage(esc.jid, 'assistant', customerMsg);
+      store.markEscalationHandled(esc.id);
+      resume(esc.jid);
+      const who = esc.name || esc.phone || esc.jid;
+      await reply(`✅ تم إرسال قرارك للعميل ${who}:\n"${customerMsg}"`);
+    } catch (err) {
+      await reply('تعذّر الإرسال للعميل: ' + (err as Error).message);
+    }
+  }
+
   async function handleIncoming(msg: proto.IWebMessageInfo): Promise<void> {
     const jid = msg.key.remoteJid;
     const msgId = msg.key.id;
@@ -244,6 +325,12 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
     store.markProcessed(msgId);
 
     if (!text || !text.trim()) return; // no supported text content (image/doc handled later)
+
+    // Admin channel: messages from YOUR own number = control commands / decisions.
+    if (adminJid && sameNumber(jid, adminJid)) {
+      await handleAdminMessage(text.trim());
+      return;
+    }
 
     const pushName = msg.pushName ?? null;
     store.upsertContact(jid, phoneFromJid(jid), pushName);

@@ -27,8 +27,8 @@ async function main() {
   runtime.aiProviderName = provider.name;
   runtime.aiReady = provider.isReady();
 
-  // Health + QR server (always up, so you can check status even before pairing).
-  startHealthServer();
+  // Dashboard + API + health server (always up).
+  startHealthServer(provider);
 
   // WhatsApp.
   try {

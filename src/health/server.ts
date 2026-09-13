@@ -8,9 +8,11 @@ import { runtime } from '../runtime.js';
 import { store } from '../db/index.js';
 import { control } from '../control.js';
 import { pause, resume } from '../takeover/takeover.js';
+import type { AIProvider } from '../ai/index.js';
+import { generateInsight, suggestReply, analyzeTrends } from '../ai/insight.js';
 import { DASHBOARD_HTML } from './dashboard-html.js';
 
-export function startHealthServer(): void {
+export function startHealthServer(provider: AIProvider): void {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '256kb' }));
@@ -158,7 +160,70 @@ export function startHealthServer(): void {
     res.type('text/plain').send(tailLogs(300));
   });
 
+  // ---- CRM / sales ----
+  api.get('/kpis', (_req, res) => res.json(store.kpis()));
+  api.get('/pipeline', (_req, res) => res.json(store.pipeline()));
+  api.get('/analytics', (_req, res) => res.json(store.analytics()));
+
+  api.post('/contact/stage', (req, res) => {
+    const jid = String(req.body?.jid || '');
+    const stage = String(req.body?.stage || '');
+    if (!jid || !stage) return res.status(400).json({ error: 'jid and stage required' });
+    store.setStage(jid, stage);
+    res.json({ ok: true });
+  });
+
+  api.post('/contact/followup', (req, res) => {
+    const jid = String(req.body?.jid || '');
+    if (!jid) return res.status(400).json({ error: 'jid required' });
+    const at = req.body?.at ? Number(req.body.at) : null;
+    const note = req.body?.note ? String(req.body.note) : null;
+    store.setFollowup(jid, at, note);
+    res.json({ ok: true });
+  });
+
+  // ---- AI intelligence ----
+  api.get('/insight', async (req, res) => {
+    const jid = String(req.query.jid || '');
+    if (!jid) return res.status(400).json({ error: 'jid required' });
+    const cached = store.getInsight(jid);
+    const refresh = req.query.refresh === '1';
+    if (cached.insight && !refresh) {
+      return res.json({ insight: JSON.parse(cached.insight), at: cached.insight_at, cached: true });
+    }
+    const insight = await generateInsight(jid, provider);
+    if (!insight) return res.json({ insight: null });
+    res.json({ insight, at: Date.now(), cached: false });
+  });
+
+  api.post('/suggest', async (req, res) => {
+    const jid = String(req.body?.jid || '');
+    if (!jid) return res.status(400).json({ error: 'jid required' });
+    res.json({ text: await suggestReply(jid, provider) });
+  });
+
+  api.get('/analyze-trends', async (_req, res) => {
+    res.json({ text: await analyzeTrends(provider) });
+  });
+
+  // ---- Live instructions (editable persona knowledge) ----
+  api.get('/instructions', (_req, res) => {
+    res.json({ text: store.getSetting('extra_instructions') || '' });
+  });
+  api.post('/instructions', (req, res) => {
+    store.setSetting('extra_instructions', String(req.body?.text ?? ''));
+    logger.warn('[DASHBOARD] extra instructions updated');
+    res.json({ ok: true });
+  });
+
   app.use('/api', api);
+
+  // Optional brand logo: serve /logo from public/logo.png if present.
+  app.get('/logo', (_req, res) => {
+    const p = path.join(config.root, 'public', 'logo.png');
+    if (fs.existsSync(p)) res.type('png').send(fs.readFileSync(p));
+    else res.status(404).end();
+  });
 
   app.listen(config.http.port, () => {
     logger.info('[HTTP] dashboard + API on port %d', config.http.port);
@@ -179,6 +244,8 @@ function publicState() {
     app: 'abjad-agent',
     whatsapp: runtime.whatsapp,
     aiProvider: runtime.aiProviderName,
+    aiModel:
+      config.ai.provider === 'openai' ? config.ai.openaiModel : config.ai.anthropicModel,
     aiReady: runtime.aiReady,
     aiGloballyEnabled: control.aiGloballyEnabled,
     adminConfigured: Boolean(config.admin.number),

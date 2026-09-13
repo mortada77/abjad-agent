@@ -73,6 +73,21 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_escalations_created ON escalations(created_at DESC);
 `);
 
+// --- Lightweight migrations: add CRM columns to contacts if missing ---
+function ensureColumn(table: string, col: string, def: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === col)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+  }
+}
+ensureColumn('contacts', 'stage', "TEXT NOT NULL DEFAULT 'new'"); // new|interested|trial|negotiation|subscribed|lost
+ensureColumn('contacts', 'interest_pct', 'INTEGER');
+ensureColumn('contacts', 'insight', 'TEXT'); // cached AI insight JSON
+ensureColumn('contacts', 'insight_at', 'INTEGER');
+ensureColumn('contacts', 'followup_at', 'INTEGER');
+ensureColumn('contacts', 'followup_note', 'TEXT');
+ensureColumn('contacts', 'last_message', 'TEXT'); // preview of last message
+
 logger.info('[DB] SQLite ready at %s', config.paths.db);
 
 // ---- Prepared statements ----
@@ -109,7 +124,8 @@ const stmtUpsertConvState = db.prepare(`
     summary = @summary, summarized_upto = @summarized_upto, updated_at = @now
 `);
 const stmtListContacts = db.prepare(`
-  SELECT jid, phone, display_name, state, human_until, last_seen
+  SELECT jid, phone, display_name, state, human_until, last_seen,
+         stage, interest_pct, last_message, followup_at
   FROM contacts ORDER BY last_seen DESC LIMIT ?
 `);
 const stmtConversation = db.prepare(`
@@ -129,7 +145,22 @@ const stmtListEscalations = db.prepare(`
   SELECT id, jid, name, phone, reason, last_msg, handled, created_at
   FROM escalations ORDER BY id DESC LIMIT ?
 `);
+const stmtListUnhandled = db.prepare(`
+  SELECT id, jid, name, phone, reason, last_msg, created_at
+  FROM escalations WHERE handled = 0 ORDER BY id DESC LIMIT ?
+`);
+const stmtGetEscalation = db.prepare(`SELECT * FROM escalations WHERE id = ?`);
 const stmtHandleEscalation = db.prepare(`UPDATE escalations SET handled = 1 WHERE id = ?`);
+const stmtSetLastMessage = db.prepare(
+  `UPDATE contacts SET last_message = @m, last_seen = @now WHERE jid = @jid`,
+);
+const stmtSetStage = db.prepare(`UPDATE contacts SET stage = @stage WHERE jid = @jid`);
+const stmtSetInsight = db.prepare(
+  `UPDATE contacts SET insight = @insight, interest_pct = @pct, stage = COALESCE(@stage, stage), insight_at = @now WHERE jid = @jid`,
+);
+const stmtSetFollowup = db.prepare(
+  `UPDATE contacts SET followup_at = @at, followup_note = @note WHERE jid = @jid`,
+);
 
 export interface ContactRow {
   jid: string;
@@ -171,6 +202,8 @@ export const store = {
       wa_msg_id: waMsgId ?? null,
       now: Date.now(),
     });
+    const preview = (role === 'assistant' ? '🤖 ' : '') + content.slice(0, 80);
+    stmtSetLastMessage.run({ jid, m: preview, now: Date.now() });
   },
 
   /** Recent turns in chronological order (oldest -> newest). */
@@ -214,7 +247,7 @@ export const store = {
     });
   },
 
-  listContacts(limit = 100) {
+  listContacts(limit = 200) {
     return stmtListContacts.all(limit) as {
       jid: string;
       phone: string | null;
@@ -222,7 +255,88 @@ export const store = {
       state: ContactState;
       human_until: number | null;
       last_seen: number;
+      stage: string;
+      interest_pct: number | null;
+      last_message: string | null;
+      followup_at: number | null;
     }[];
+  },
+
+  setStage(jid: string, stage: string) {
+    stmtSetStage.run({ jid, stage });
+  },
+
+  setInsight(jid: string, insightJson: string, pct: number | null, stage: string | null) {
+    stmtSetInsight.run({ jid, insight: insightJson, pct, stage, now: Date.now() });
+  },
+
+  getInsight(jid: string): { insight: string | null; insight_at: number | null } {
+    const row = stmtGetContact.get(jid) as ContactRow & { insight?: string; insight_at?: number };
+    return { insight: row?.insight ?? null, insight_at: row?.insight_at ?? null };
+  },
+
+  setFollowup(jid: string, at: number | null, note: string | null) {
+    stmtSetFollowup.run({ jid, at, note });
+  },
+
+  kpis() {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const t0 = startOfDay.getTime();
+    const convos = (
+      db
+        .prepare(`SELECT COUNT(DISTINCT jid) AS c FROM messages WHERE created_at >= ?`)
+        .get(t0) as { c: number }
+    ).c;
+    const newCustomers = (
+      db.prepare(`SELECT COUNT(*) AS c FROM contacts WHERE first_seen >= ?`).get(t0) as {
+        c: number;
+      }
+    ).c;
+    const opportunities = (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM contacts WHERE stage IN ('interested','trial','negotiation')`,
+        )
+        .get() as { c: number }
+    ).c;
+    const needsYou = (
+      db.prepare(`SELECT COUNT(*) AS c FROM escalations WHERE handled = 0`).get() as { c: number }
+    ).c;
+    return { conversations: convos, newCustomers, opportunities, needsYou };
+  },
+
+  pipeline() {
+    const rows = db
+      .prepare(`SELECT stage, COUNT(*) AS c FROM contacts GROUP BY stage`)
+      .all() as { stage: string; c: number }[];
+    const map: Record<string, number> = {
+      new: 0,
+      interested: 0,
+      trial: 0,
+      negotiation: 0,
+      subscribed: 0,
+      lost: 0,
+    };
+    for (const r of rows) if (r.stage in map) map[r.stage] = r.c;
+    return map;
+  },
+
+  analytics() {
+    const totalContacts = (
+      db.prepare(`SELECT COUNT(*) AS c FROM contacts`).get() as { c: number }
+    ).c;
+    const totalMessages = (
+      db.prepare(`SELECT COUNT(*) AS c FROM messages`).get() as { c: number }
+    ).c;
+    const totalEscalations = (
+      db.prepare(`SELECT COUNT(*) AS c FROM escalations`).get() as { c: number }
+    ).c;
+    const escalatedContacts = (
+      db.prepare(`SELECT COUNT(DISTINCT jid) AS c FROM escalations`).get() as { c: number }
+    ).c;
+    const solvedByAi = Math.max(totalContacts - escalatedContacts, 0);
+    return { totalContacts, totalMessages, totalEscalations, escalatedContacts, solvedByAi };
   },
 
   conversation(jid: string, limit = 50) {
@@ -249,8 +363,8 @@ export const store = {
     phone: string | null;
     reason: string;
     lastMsg: string;
-  }) {
-    stmtAddEscalation.run({
+  }): number {
+    const info = stmtAddEscalation.run({
       jid: e.jid,
       name: e.name,
       phone: e.phone,
@@ -258,6 +372,34 @@ export const store = {
       last_msg: e.lastMsg,
       now: Date.now(),
     });
+    return Number(info.lastInsertRowid);
+  },
+
+  listUnhandledEscalations(limit = 20) {
+    return stmtListUnhandled.all(limit) as {
+      id: number;
+      jid: string;
+      name: string | null;
+      phone: string | null;
+      reason: string;
+      last_msg: string;
+      created_at: number;
+    }[];
+  },
+
+  getEscalation(id: number) {
+    return stmtGetEscalation.get(id) as
+      | {
+          id: number;
+          jid: string;
+          name: string | null;
+          phone: string | null;
+          reason: string;
+          last_msg: string;
+          handled: number;
+          created_at: number;
+        }
+      | undefined;
   },
 
   listEscalations(limit = 50) {

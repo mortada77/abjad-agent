@@ -46,7 +46,7 @@ services:
       LOG_LEVEL: info
       NODE_ENV: production
     volumes:
-      - abjad_auth:/app/whatsapp-auth
+      - abjad_auth2:/app/whatsapp-auth
       - abjad_data:/app/data
       - abjad_logs:/app/logs
     logging:
@@ -56,6 +56,6 @@ services:
         max-file: "5"
 
 volumes:
-  abjad_auth:
+  abjad_auth2:
   abjad_data:
   abjad_logs:

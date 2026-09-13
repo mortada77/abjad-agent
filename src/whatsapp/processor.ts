@@ -114,8 +114,8 @@ export class MessageProcessor {
     const name = contact?.display_name ?? null;
     const phone = contact?.phone ?? null;
 
-    store.addEscalation({ jid, name, phone, reason, lastMsg });
-    logger.warn('[ESCALATE] %s (%s): %s', name ?? phone ?? jid, phone ?? '', reason);
+    const id = store.addEscalation({ jid, name, phone, reason, lastMsg });
+    logger.warn('[ESCALATE] #%d %s (%s): %s', id, name ?? phone ?? jid, phone ?? '', reason);
 
     // Pause AI for this contact so the operator can take over.
     pause(jid);
@@ -123,11 +123,12 @@ export class MessageProcessor {
     if (this.adminJid) {
       const who = name ? `${name} (${phone ?? ''})` : phone ?? jid;
       const note =
-        `🔔 *مرتضى، محتاج قرارك*\n\n` +
+        `🔔 *محتاج قرارك* (طلب #${id})\n\n` +
         `👤 العميل: ${who}\n` +
         `📌 الطلب: ${reason}\n` +
         `💬 آخر رسالة: "${lastMsg}"\n\n` +
-        `الرد التلقائي متوقف لهذا العميل. افتح محادثته وردّ يدوياً، وبعدها اكتب /resume بمحادثته لإرجاع الرد التلقائي.`;
+        `↩️ ردّ عليّ بالقرار وأنا أوصله للعميل مباشرة.\n` +
+        `لو عندك أكثر من طلب، ابدأ رسالتك بـ #${id}`;
       try {
         await this.send(this.adminJid, note);
       } catch (err) {
