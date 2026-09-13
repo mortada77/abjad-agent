@@ -73,6 +73,10 @@ function phoneFromJid(jid: string): string {
 export async function startWhatsApp(provider: AIProvider): Promise<void> {
   fs.mkdirSync(config.paths.auth, { recursive: true });
 
+  // Learned mapping from privacy @lid -> real phone JID (@s.whatsapp.net),
+  // built from incoming message keys (senderPn/participantPn). Used to deliver.
+  const lidToPn = new Map<string, string>();
+
   // Track message IDs the bot itself sent, so echoes (fromMe) are not treated
   // as operator manual messages (prevents loops + false human-takeover).
   const sentByBot = new Set<string>();
@@ -92,13 +96,17 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
   const send = async (jid: string, text: string) => {
     if (!sock) throw new Error('WhatsApp socket not connected');
     let target = jid;
-    // WhatsApp @lid delivery needs the phone-number JID. Resolve it if possible.
+    // WhatsApp @lid delivery needs the phone-number JID. Resolve it.
     if (target.endsWith('@lid')) {
-      try {
-        const pn = await (sock as any).signalRepository?.lidMapping?.getPNForLID?.(target);
-        if (pn && typeof pn === 'string') target = pn;
-      } catch {
-        /* fall back to @lid */
+      const learned = lidToPn.get(target);
+      if (learned) target = learned;
+      else {
+        try {
+          const pn = await (sock as any).signalRepository?.lidMapping?.getPNForLID?.(target);
+          if (pn && typeof pn === 'string') target = pn;
+        } catch {
+          /* fall back to @lid */
+        }
       }
     }
     const res = await sock.sendMessage(target, { text });
@@ -318,11 +326,18 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
     if (rawJid.endsWith('@broadcast')) return;
 
     // Prefer the real phone-number JID over the privacy @lid, so replies deliver.
-    const altPn = (msg.key as any).remoteJidAlt as string | undefined;
+    // WhatsApp carries it in senderPn / participantPn / remoteJidAlt.
+    const k = msg.key as any;
+    const altPn: string | undefined = k.senderPn || k.participantPn || k.remoteJidAlt;
+    const senderLid: string | undefined = k.senderLid || k.participantLid;
+    if (altPn && altPn.endsWith('@s.whatsapp.net')) {
+      if (rawJid.endsWith('@lid')) lidToPn.set(rawJid, altPn);
+      if (senderLid) lidToPn.set(senderLid, altPn);
+    }
     const jid =
       rawJid.endsWith('@lid') && altPn && altPn.endsWith('@s.whatsapp.net') ? altPn : rawJid;
     if (rawJid.endsWith('@lid') && jid === rawJid) {
-      logger.warn('[WHATSAPP] @lid chat without PN alt (key: %s)', Object.keys(msg.key).join(','));
+      logger.warn('[WHATSAPP] @lid chat, no PN resolved (key: %s)', Object.keys(msg.key).join(','));
     }
 
     const text = extractText(msg);
