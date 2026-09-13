@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import QRCode from 'qrcode';
 import { config } from '../config.js';
-import { logger } from '../logger.js';
+import { logger, recentLogs } from '../logger.js';
 import { runtime } from '../runtime.js';
 import { store } from '../db/index.js';
 import { control } from '../control.js';
@@ -157,7 +157,7 @@ export function startHealthServer(provider: AIProvider): void {
   });
 
   api.get('/logs', (_req, res) => {
-    res.type('text/plain').send(tailLogs(300));
+    res.type('text/plain').send(recentLogs(400));
   });
 
   // ---- CRM / sales ----

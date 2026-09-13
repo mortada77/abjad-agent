@@ -66,9 +66,23 @@ pre{background:#060b16;border:1px solid var(--line);border-radius:12px;padding:1
 img.qr{background:#fff;padding:10px;border-radius:12px}
 .switch{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:14px}
 h3{margin:0 0 10px}
+/* animated background canvas */
+#bg{position:fixed;inset:0;width:100vw;height:100vh;z-index:-1;pointer-events:none;display:block}
+/* Abjad blue neon glow across the UI */
+header{box-shadow:0 6px 30px rgba(47,107,255,.18)}
+.brand b{text-shadow:0 0 14px rgba(56,189,248,.7)}
+.brand .logo,.brand svg{box-shadow:0 0 16px rgba(47,107,255,.7);filter:drop-shadow(0 0 8px rgba(56,189,248,.6))}
+.card{box-shadow:0 0 0 1px rgba(47,107,255,.06),0 10px 34px rgba(0,0,0,.4)}
+.kpi{box-shadow:0 0 22px rgba(47,107,255,.14)}
+.kpi .n{text-shadow:0 0 18px rgba(47,107,255,.5)}
+button:not(.sec):not(.bad){box-shadow:0 0 16px rgba(47,107,255,.55)}
+.t.on,.ct.on{box-shadow:0 0 16px rgba(47,107,255,.5)}
+.av{box-shadow:0 0 14px rgba(47,107,255,.6)}
+.meter>i{box-shadow:0 0 12px rgba(56,189,248,.6)}
 </style>
 </head>
 <body>
+<canvas id="bg"></canvas>
 
 <div id="login" class="wrap">
   <div class="card" style="max-width:420px;margin:60px auto">
@@ -187,6 +201,11 @@ h3{margin:0 0 10px}
         <button class="bad" onclick="resetSession()">إعادة ربط الواتساب (QR جديد)</button>
         <button class="sec" onclick="refreshAll()">تحديث</button>
       </div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h3>🎨 خلفية الواجهة</h3>
+      <p class="muted">اختر نمط الخلفية المتحركة (أو أوقفها لخلفية ثابتة).</p>
+      <div class="nav" id="bgOpts"></div>
     </div>
     <div id="qrCard" class="card hide" style="text-align:center;margin-top:14px">
       <h3>ربط الواتساب</h3><div id="qrBox"></div>
@@ -336,6 +355,38 @@ function showView(v){["work","ana","know","sys"].forEach(function(x){
 document.getElementById("view-"+x).classList.toggle("hide",x!==v);
 document.getElementById("nav-"+x).classList.toggle("on",x===v);});
 if(v==="ana")loadAnalytics();if(v==="know")loadInstr();if(v==="sys"){loadLogs();refreshQR();}}
+
+/* ---------- animated background ---------- */
+var BGMODES=[["stars","✨ نجوم"],["particles","🔗 جسيمات"],["grid","▦ شبكة"],["waves","〜 أمواج"],["aurora","🌌 شفق"],["off","■ بدون (ثابت)"]];
+var bgMode=localStorage.getItem("bg_mode")||"stars",bgC,bgX,bgRAF,bgP=[],bgOff=0,bgW=0,bgH=0;
+function bgResize(){if(!bgC)return;bgW=bgC.width=window.innerWidth;bgH=bgC.height=window.innerHeight;}
+function renderBgOptions(){var el=document.getElementById("bgOpts");if(!el)return;el.innerHTML="";
+BGMODES.forEach(function(m){var b=document.createElement("div");b.className="t sm"+(m[0]===bgMode?" on":"");
+b.setAttribute("data-bg",m[0]);b.textContent=m[1];b.onclick=function(){setBg(m[0]);};el.appendChild(b);});}
+function stopBg(){if(bgRAF)cancelAnimationFrame(bgRAF);bgRAF=null;if(bgX)bgX.clearRect(0,0,bgW,bgH);}
+function setBg(m){bgMode=m;localStorage.setItem("bg_mode",m);stopBg();
+document.querySelectorAll("[data-bg]").forEach(function(e){e.classList.toggle("on",e.getAttribute("data-bg")===m);});
+if(m==="off"||!bgX)return;seedBg(m);bgLoop();}
+function seedBg(m){bgP=[];var n=m==="particles"?70:130;
+if(m==="stars"||m==="particles"){for(var i=0;i<n;i++)bgP.push({x:Math.random()*bgW,y:Math.random()*bgH,r:Math.random()*1.6+.4,s:Math.random()*.4+.08,vx:(Math.random()-.5)*.7,vy:(Math.random()-.5)*.7,p:Math.random()*6.28});}}
+function bgLoop(){bgRAF=requestAnimationFrame(bgLoop);bgOff++;var x=bgX;if(!x)return;
+if(bgMode==="stars"){x.fillStyle="rgba(7,12,23,.35)";x.fillRect(0,0,bgW,bgH);x.shadowColor="#38bdf8";x.shadowBlur=6;
+bgP.forEach(function(o){o.y+=o.s;if(o.y>bgH)o.y=0;o.p+=.05;var a=.35+Math.sin(o.p)*.35;x.beginPath();x.arc(o.x,o.y,o.r,0,6.28);x.fillStyle="rgba(56,189,248,"+a+")";x.fill();});x.shadowBlur=0;}
+else if(bgMode==="particles"){x.fillStyle="#070c17";x.fillRect(0,0,bgW,bgH);
+for(var i=0;i<bgP.length;i++){var o=bgP[i];o.x+=o.vx;o.y+=o.vy;if(o.x<0||o.x>bgW)o.vx*=-1;if(o.y<0||o.y>bgH)o.vy*=-1;
+for(var j=i+1;j<bgP.length;j++){var q=bgP[j],dx=o.x-q.x,dy=o.y-q.y,d=dx*dx+dy*dy;if(d<14000){x.strokeStyle="rgba(47,107,255,"+(1-d/14000)*.35+")";x.lineWidth=1;x.beginPath();x.moveTo(o.x,o.y);x.lineTo(q.x,q.y);x.stroke();}}}
+x.fillStyle="#38bdf8";bgP.forEach(function(o){x.beginPath();x.arc(o.x,o.y,1.6,0,6.28);x.fill();});}
+else if(bgMode==="grid"){x.fillStyle="#070c17";x.fillRect(0,0,bgW,bgH);x.strokeStyle="rgba(47,107,255,.16)";x.lineWidth=1;var g=44,off=bgOff%g;
+for(var gx=off;gx<bgW;gx+=g){x.beginPath();x.moveTo(gx,0);x.lineTo(gx,bgH);x.stroke();}
+for(var gy=off;gy<bgH;gy+=g){x.beginPath();x.moveTo(0,gy);x.lineTo(bgW,gy);x.stroke();}}
+else if(bgMode==="waves"){x.fillStyle="#070c17";x.fillRect(0,0,bgW,bgH);var cols=["rgba(47,107,255,.4)","rgba(56,189,248,.3)","rgba(168,85,247,.22)"];
+for(var w=0;w<3;w++){x.beginPath();x.strokeStyle=cols[w];x.lineWidth=2;
+for(var px=0;px<=bgW;px+=8){var py=bgH/2+Math.sin((px+bgOff*(1+w))/120)*(60+w*30)+(w-1)*70;if(px===0)x.moveTo(px,py);else x.lineTo(px,py);}x.stroke();}}
+else if(bgMode==="aurora"){x.fillStyle="rgba(7,12,23,.5)";x.fillRect(0,0,bgW,bgH);var bl=[["#2f6bff",0],["#38bdf8",2],["#a855f7",4]];
+bl.forEach(function(b){var cx=bgW/2+Math.cos(bgOff/200+b[1])*bgW/3,cy=bgH/2+Math.sin(bgOff/180+b[1])*bgH/3;
+var gr=x.createRadialGradient(cx,cy,0,cx,cy,320);gr.addColorStop(0,b[0]+"55");gr.addColorStop(1,"rgba(0,0,0,0)");x.fillStyle=gr;x.fillRect(0,0,bgW,bgH);});}}
+function bgInit(){bgC=document.getElementById("bg");if(!bgC)return;bgX=bgC.getContext("2d");window.addEventListener("resize",bgResize);bgResize();renderBgOptions();setBg(bgMode);}
+bgInit();
 
 if(TOKEN)boot();
 </script>

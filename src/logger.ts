@@ -1,59 +1,45 @@
 import pino from 'pino';
+import { Writable } from 'node:stream';
 import fs from 'node:fs';
 import { config } from './config.js';
 
-// Ensure the logs directory exists.
 try {
   fs.mkdirSync(config.paths.logs, { recursive: true });
 } catch {
   /* ignore */
 }
 
-/**
- * Logger writes to:
- *  - stdout (captured by Docker; rotation handled by the json-file driver)
- *  - logs/app.log with size/daily rotation via pino-roll
- *
- * Secrets (API keys, tokens) must NEVER be passed to the logger.
- */
-const baseOptions: pino.LoggerOptions = {
-  level: config.logLevel,
-  base: undefined, // drop pid/hostname noise
-  timestamp: pino.stdTimeFunctions.isoTime,
-};
-
-const targets: pino.TransportTargetOptions[] = [
-  {
-    target: 'pino/file',
-    level: config.logLevel,
-    options: { destination: 1 }, // stdout
+// In-memory ring buffer of recent log lines (reliable source for the dashboard,
+// independent of file transports which can fail silently in containers).
+const RING_MAX = 600;
+const ring: string[] = [];
+const memStream = new Writable({
+  write(chunk, _enc, cb) {
+    const s = chunk.toString();
+    for (const line of s.split('\n')) if (line.trim()) ring.push(line);
+    while (ring.length > RING_MAX) ring.shift();
+    cb();
   },
-  {
-    target: 'pino-roll',
-    level: config.logLevel,
-    options: {
-      file: `${config.paths.logs}/app.log`,
-      frequency: 'daily',
-      size: '10m',
-      limit: { count: 14 },
-      mkdir: true,
-      dateFormat: 'yyyy-MM-dd',
-    },
-  },
-];
+});
 
-function buildLogger(): pino.Logger {
-  try {
-    return pino(baseOptions, pino.transport({ targets }));
-  } catch (err) {
-    // Fall back to plain stdout logging if the file-rotation transport fails.
-    // (stdout is still captured by Docker with json-file rotation.)
-    const l = pino(baseOptions);
-    l.warn('[LOGGER] file rotation transport unavailable, using stdout only: %s', (err as Error).message);
-    return l;
-  }
+export function recentLogs(n = 400): string {
+  return ring.slice(-n).join('\n') || '(no logs yet)';
 }
 
-export const logger = buildLogger();
+/**
+ * Logger writes to stdout (captured by Docker json-file with rotation) and to
+ * the in-memory ring above. Secrets must never be passed to the logger.
+ */
+export const logger = pino(
+  {
+    level: config.logLevel,
+    base: undefined,
+    timestamp: pino.stdTimeFunctions.isoTime,
+  },
+  pino.multistream([
+    { stream: process.stdout, level: config.logLevel },
+    { stream: memStream, level: config.logLevel },
+  ]),
+);
 
 export type Logger = typeof logger;

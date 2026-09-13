@@ -120,7 +120,10 @@ export class MessageProcessor {
     // Pause AI for this contact so the operator can take over.
     pause(jid);
 
-    if (this.adminJid) {
+    // Prefer the admin address that registered via /admin (handles @lid), else
+    // the configured ADMIN_NUMBER.
+    const target = store.getSetting('admin_jid') || this.adminJid;
+    if (target) {
       const who = name ? `${name} (${phone ?? ''})` : phone ?? jid;
       const note =
         `🔔 *محتاج قرارك* (طلب #${id})\n\n` +
@@ -130,12 +133,12 @@ export class MessageProcessor {
         `↩️ ردّ عليّ بالقرار وأنا أوصله للعميل مباشرة.\n` +
         `لو عندك أكثر من طلب، ابدأ رسالتك بـ #${id}`;
       try {
-        await this.send(this.adminJid, note);
+        await this.send(target, note);
       } catch (err) {
         logger.error('[ESCALATE] failed to notify admin: %s', (err as Error).message);
       }
     } else {
-      logger.warn('[ESCALATE] ADMIN_NUMBER not set — no notification sent');
+      logger.warn('[ESCALATE] no admin registered — no notification sent');
     }
   }
 

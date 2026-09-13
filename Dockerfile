@@ -21,6 +21,7 @@ RUN npm install --no-audit --no-fund
 COPY tsconfig.json ./
 COPY src ./src
 COPY prompts ./prompts
+COPY public ./public
 
 # Persistent data dirs — created and owned by `node` so that named
 # volumes mounted here inherit the correct (non-root) ownership.

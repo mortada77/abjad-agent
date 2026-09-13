@@ -220,8 +220,15 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
     });
   };
 
-  async function handleAdminMessage(text: string): Promise<void> {
-    const reply = (t: string) => send(adminJid!, t);
+  function isAdmin(jid: string): boolean {
+    const stored = store.getSetting('admin_jid');
+    if (stored && stored === jid) return true;
+    if (adminJid && sameNumber(jid, adminJid)) return true;
+    return false;
+  }
+
+  async function handleAdminMessage(fromJid: string, text: string): Promise<void> {
+    const reply = (t: string) => send(fromJid, t);
 
     if (text.startsWith('/')) {
       const [cmd, ...rest] = text.split(/\s+/);
@@ -325,10 +332,25 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
     store.markProcessed(msgId);
 
     if (!text || !text.trim()) return; // no supported text content (image/doc handled later)
+    const body = text.trim();
 
-    // Admin channel: messages from YOUR own number = control commands / decisions.
-    if (adminJid && sameNumber(jid, adminJid)) {
-      await handleAdminMessage(text.trim());
+    // One-time admin registration (works even when your number is hidden as @lid):
+    //   send  /admin <PAIRING_TOKEN>  from your phone.
+    if (body.startsWith('/admin ')) {
+      const pin = body.split(/\s+/)[1] || '';
+      if (pin === config.http.pairingToken) {
+        store.setSetting('admin_jid', jid);
+        logger.warn('[ADMIN] registered admin jid=%s', jid);
+        await send(jid, '✅ تم تسجيلك كأدمن. الحين تقدر تعطي أوامر (اكتب /help) وتستلم إشعارات القرار وترد عليها.');
+      } else {
+        await send(jid, '❌ رمز غير صحيح.');
+      }
+      return;
+    }
+
+    // Admin channel: your messages = control commands / decisions (not a customer).
+    if (isAdmin(jid)) {
+      await handleAdminMessage(jid, body);
       return;
     }
 
