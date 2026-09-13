@@ -7,6 +7,7 @@ import { isAiActive, pause } from '../takeover/takeover.js';
 import { parseEscalation } from '../escalation.js';
 import { retry, withTimeout, Semaphore } from '../util.js';
 import { toJid } from '../control.js';
+import { getWebsiteContext } from '../ai/website-context.js';
 
 export type SendReply = (jid: string, text: string) => Promise<void>;
 
@@ -138,7 +139,8 @@ export class MessageProcessor {
 
   private async generate(jid: string, userText: string): Promise<string> {
     const { systemSuffix, history } = buildContext(jid);
-    const system = getSystemPrompt() + systemSuffix;
+    const websiteContext = await getWebsiteContext();
+    const system = getSystemPrompt() + websiteContext + systemSuffix;
 
     const release = await this.globalLimiter.acquire();
     try {
