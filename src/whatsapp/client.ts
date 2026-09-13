@@ -91,7 +91,17 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
 
   const send = async (jid: string, text: string) => {
     if (!sock) throw new Error('WhatsApp socket not connected');
-    const res = await sock.sendMessage(jid, { text });
+    let target = jid;
+    // WhatsApp @lid delivery needs the phone-number JID. Resolve it if possible.
+    if (target.endsWith('@lid')) {
+      try {
+        const pn = await (sock as any).signalRepository?.lidMapping?.getPNForLID?.(target);
+        if (pn && typeof pn === 'string') target = pn;
+      } catch {
+        /* fall back to @lid */
+      }
+    }
+    const res = await sock.sendMessage(target, { text });
     rememberSent(res?.key?.id ?? undefined);
   };
 
@@ -298,14 +308,22 @@ export async function startWhatsApp(provider: AIProvider): Promise<void> {
   }
 
   async function handleIncoming(msg: proto.IWebMessageInfo): Promise<void> {
-    const jid = msg.key.remoteJid;
+    const rawJid = msg.key.remoteJid;
     const msgId = msg.key.id;
-    if (!jid || !msgId) return;
+    if (!rawJid || !msgId) return;
 
     // Ignore status broadcasts and (optionally) groups.
-    if (jid === 'status@broadcast') return;
-    if (config.whatsapp.ignoreGroups && jid.endsWith('@g.us')) return;
-    if (jid.endsWith('@broadcast')) return;
+    if (rawJid === 'status@broadcast') return;
+    if (config.whatsapp.ignoreGroups && rawJid.endsWith('@g.us')) return;
+    if (rawJid.endsWith('@broadcast')) return;
+
+    // Prefer the real phone-number JID over the privacy @lid, so replies deliver.
+    const altPn = (msg.key as any).remoteJidAlt as string | undefined;
+    const jid =
+      rawJid.endsWith('@lid') && altPn && altPn.endsWith('@s.whatsapp.net') ? altPn : rawJid;
+    if (rawJid.endsWith('@lid') && jid === rawJid) {
+      logger.warn('[WHATSAPP] @lid chat without PN alt (key: %s)', Object.keys(msg.key).join(','));
+    }
 
     const text = extractText(msg);
 
