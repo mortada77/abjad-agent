@@ -15,7 +15,7 @@ export const EXECUTIVE_TOOLS: ToolDef[] = [
   { name: 'abjad_get_customer', description: 'تفاصيل عميل محدد ومحادثته وتحليله (بالاسم أو الرقم).', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'], additionalProperties: false } },
   { name: 'abjad_get_pending_human', description: 'الحالات التي تحتاج تدخل بشري (تصعيدات).', parameters: noArgs },
   { name: 'abjad_get_sales_pipeline', description: 'مراحل البيع وأعدادها.', parameters: noArgs },
-  { name: 'abjad_get_marketing_performance', description: 'أداء التسويق: المحادثات، الردود، ما حلّه AI وحده، والتصعيدات.', parameters: noArgs },
+  { name: 'abjad_get_marketing_performance', description: 'أداء إيجنت واتساب مع عملاء أبجد: المحادثات، الردود، ما حلّه وحده، والتصعيدات. هذه إحصاءات تشغيل الإيجنت وليست مشروعاً أو منتجاً مستقلاً.', parameters: noArgs },
   { name: 'abjad_get_recent_customers', description: 'آخر العملاء الذين تفاعلوا.', parameters: { type: 'object', properties: { limit: { type: 'number' } }, additionalProperties: false } },
   { name: 'task_create', description: 'إنشاء مهمة جديدة للمالك.', parameters: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string' }, priority: { type: 'string', enum: ['low', 'normal', 'high'] } }, required: ['title'], additionalProperties: false } },
   { name: 'task_list', description: 'عرض المهام (open افتراضياً).', parameters: { type: 'object', properties: { status: { type: 'string', enum: ['open', 'done'] } }, additionalProperties: false } },
@@ -27,7 +27,7 @@ export const EXECUTIVE_TOOLS: ToolDef[] = [
 export function toolHint(name: string): string {
   if (name.startsWith('abjad_get_customer') || name.startsWith('abjad_search')) return 'أراجع العميل...';
   if (name.startsWith('abjad_get_pending')) return 'أشوف الحالات...';
-  if (name.startsWith('abjad_get_marketing')) return 'أراجع التسويق...';
+  if (name.startsWith('abjad_get_marketing')) return 'أراجع أداء إيجنت العملاء...';
   if (name.startsWith('abjad')) return 'أراجع أبجد...';
   if (name.startsWith('task')) return 'أرتّب المهام...';
   return 'أعالج...';

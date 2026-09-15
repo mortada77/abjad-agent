@@ -13,7 +13,7 @@ export const PROJECTS: ProjectInfo[] = [
     id: 'abjad',
     name: 'Abjad',
     description:
-      'منصّة أبجد لإدارة المطاعم: Abjad Kitchen و Abjad Cashier، مع وكيل واتساب للتسويق والعملاء.',
+      'نظام أبجد لإدارة المطاعم والمطابخ: Abjad Kitchen وAbjad Cashier. يوجد إيجنت واتساب تابع للنظام يرد على العملاء ويسوّق هذه المنتجات، وليس منتجاً منفصلاً.',
   },
 ];
 
