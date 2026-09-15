@@ -12,6 +12,27 @@ export interface ExecutiveReply {
   toolHints: string[];
 }
 
+/** WhatsApp executive replies must stay conversational, not look like reports. */
+function polishExecutiveReply(value: string, detailed = false): string {
+  const text = value
+    .trim()
+    .replace(/\*/g, '')
+    .replace(/^\s{0,3}#{1,6}\s*/gm, '')
+    .replace(/`+/g, '')
+    .replace(/^\s*[-•]\s+/gm, '– ')
+    .replace(/\n{3,}/g, '\n\n');
+  const limit = detailed ? 1200 : 520;
+  if (text.length <= limit) return text;
+  const clipped = text.slice(0, limit);
+  const boundary = Math.max(
+    clipped.lastIndexOf('.'),
+    clipped.lastIndexOf('؟'),
+    clipped.lastIndexOf('!'),
+    clipped.lastIndexOf('\n'),
+  );
+  return (boundary > 220 ? clipped.slice(0, boundary + 1) : clipped).trim();
+}
+
 /**
  * Executive AI turn: builds owner context, runs the tool-calling loop so the
  * model can read real project data when needed, persists memory.
@@ -26,7 +47,11 @@ export async function executiveAsk(message: string, session = 'default'): Promis
   const { summarySuffix, history } = buildExecutiveContext(session);
   // history includes the message we just added; drop the last (it's `message`).
   const priorHistory = history.slice(0, -1);
-  const system = EXECUTIVE_SYSTEM_PROMPT + summarySuffix;
+  const wantsDetail = /بالتفصيل|تفصيلي|شرح كامل|خطة كاملة|تقرير/i.test(message);
+  const responseContract = wantsDetail
+    ? '\n\nاكتب جواباً منظماً بلا Markdown وبحد أقصى 1200 حرف.'
+    : '\n\nعقد الرد الإلزامي: جاوب كإنسان بجملة إلى أربع جمل قصيرة فقط، بحد أقصى 520 حرفاً. ممنوع النجوم والعناوين وMarkdown والمقدمات الطويلة. أعطِ الزبدة والخطوة العملية مباشرة.';
+  const system = EXECUTIVE_SYSTEM_PROMPT + summarySuffix + responseContract;
   const toolHints: string[] = [];
 
   let reply: string;
@@ -108,7 +133,8 @@ export async function executiveAsk(message: string, session = 'default'): Promis
       logger.error('[EXEC] empty-response recovery failed: %s', (err as Error).message);
     }
   }
-  if (!reply) reply = 'صار خلل مؤقت بإخراج الرد. حاول مرة ثانية وأنا أعالجه.';
+  if (!reply) reply = 'الاتصال بالذكاء متوقف مؤقتاً. جرّب بعد دقيقة.';
+  reply = polishExecutiveReply(reply, wantsDetail);
   store.execAddMessage('assistant', reply, session);
   void maybeSummarizeExecutive(session);
   return { reply, toolHints };
