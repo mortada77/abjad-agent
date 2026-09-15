@@ -97,6 +97,7 @@ body:after{content:"";position:fixed;inset:0;z-index:2;pointer-events:none;backg
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <script>
 var TOKEN=localStorage.getItem("abjad_token")||"";
 function doLogin(){TOKEN=document.getElementById("tok").value.trim();localStorage.setItem("abjad_token",TOKEN);boot();}
@@ -118,7 +119,7 @@ var LABELS={idle:"IDLE · VOICE READY",listening:"LISTENING",thinking:"THINKING"
 function setState(s,l){STATE=s;document.getElementById("stateLbl").textContent=(l!==undefined?l:(LABELS[s]||""));}
 
 /* ===== abstract holographic entity: GPU-driven points, no human texture ===== */
-var renderer,scene,camera,head,halo,hud,eyes,clock,particleMat;
+var renderer,scene,camera,head,halo,hud,eyes,clock,particleMat,particleCloud,avatarRoot,morphMeshes=[];
 var amp=0,targetAmp=0,lookX=0,lookY=0,pointerX=0,pointerY=0,reduced=matchMedia("(prefers-reduced-motion: reduce)").matches,slowFrames=0,lastFrame=0;
 function fit(){if(!renderer)return;renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;
  camera.position.set(0,0.15,(innerHeight>innerWidth)?4.9:4.0);camera.lookAt(0,0.15,0);camera.updateProjectionMatrix();}
@@ -137,14 +138,20 @@ function initHead(){if(typeof THREE==="undefined"||!document.createElement("canv
   if(part[i]===2||Math.random()<.075){x+=(Math.random()-.5)*.26;y+=(Math.random()-.5)*.2;}pos[i*3]=x;pos[i*3+1]=y;pos[i*3+2]=z;seed[i]=Math.random();depth[i]=Math.max(.05,Math.min(1,(z+.82)/1.64));}
  var geo=new THREE.BufferGeometry();geo.setAttribute("position",new THREE.BufferAttribute(pos,3));geo.setAttribute("aSeed",new THREE.BufferAttribute(seed,1));geo.setAttribute("aDepth",new THREE.BufferAttribute(depth,1));
  geo.setAttribute("aPart",new THREE.BufferAttribute(part,1));
- particleMat=new THREE.ShaderMaterial({uniforms:{time:{value:0},audio:{value:0},state:{value:0},pixel:{value:renderer.getPixelRatio()}},transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,vertexShader:'attribute float aSeed,aDepth,aPart;uniform float time,audio,state,pixel;varying float v,vDepth;void main(){vec3 p=position;float w=sin(time*(.45+aSeed)+aSeed*35.)*.012;float voice=audio*(aPart<.5&&p.y<-.15?.09:.045);p+=normalize(p+vec3(.001))*(w+voice*sin(time*8.+aSeed*24.));if(state>1.5&&state<4.5&&aPart>1.5){float a=time*.16;mat2 m=mat2(cos(a),-sin(a),sin(a),cos(a));p.xz=m*p.xz;}vec4 mv=modelViewMatrix*vec4(p,1.);gl_Position=projectionMatrix*mv;gl_PointSize=(.82+aSeed*1.85+audio*1.45)*pixel*(4.5/-mv.z);v=aSeed;vDepth=aDepth;}',fragmentShader:'varying float v,vDepth;uniform float state;void main(){float d=length(gl_PointCoord-.5);if(d>.5)discard;vec3 c=mix(vec3(.018,.24,.72),vec3(.7,.97,1.),v*.55+vDepth*.45);if(state>5.5)c*=.45;float alpha=smoothstep(.5,0.,d)*(.13+v*.43+vDepth*.38);gl_FragColor=vec4(c,alpha);}'});head.add(new THREE.Points(geo,particleMat));
+ particleMat=new THREE.ShaderMaterial({uniforms:{time:{value:0},audio:{value:0},state:{value:0},pixel:{value:renderer.getPixelRatio()}},transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,vertexShader:'attribute float aSeed,aDepth,aPart;uniform float time,audio,state,pixel;varying float v,vDepth;void main(){vec3 p=position;float w=sin(time*(.45+aSeed)+aSeed*35.)*.012;float voice=audio*(aPart<.5&&p.y<-.15?.09:.045);p+=normalize(p+vec3(.001))*(w+voice*sin(time*8.+aSeed*24.));if(state>1.5&&state<4.5&&aPart>1.5){float a=time*.16;mat2 m=mat2(cos(a),-sin(a),sin(a),cos(a));p.xz=m*p.xz;}vec4 mv=modelViewMatrix*vec4(p,1.);gl_Position=projectionMatrix*mv;gl_PointSize=(.82+aSeed*1.85+audio*1.45)*pixel*(4.5/-mv.z);v=aSeed;vDepth=aDepth;}',fragmentShader:'varying float v,vDepth;uniform float state;void main(){float d=length(gl_PointCoord-.5);if(d>.5)discard;vec3 c=mix(vec3(.018,.24,.72),vec3(.7,.97,1.),v*.55+vDepth*.45);if(state>5.5)c*=.45;float alpha=smoothstep(.5,0.,d)*(.13+v*.43+vDepth*.38);gl_FragColor=vec4(c,alpha);}'});particleCloud=new THREE.Points(geo,particleMat);head.add(particleCloud);
  /* Soft particle eyes: short luminous arcs, never square points or human eyeballs. */
  eyes=new THREE.Group();for(var side=-1;side<=1;side+=2){var ep=[];for(var e=0;e<16;e++){var ex=(e/15-.5)*.3;ep.push(new THREE.Vector3(side*.31+ex,.36-Math.abs(ex)*.2,.695+Math.cos(ex*8)*.012));}var eg=new THREE.BufferGeometry().setFromPoints(ep);eyes.add(new THREE.Points(eg,new THREE.PointsMaterial({color:0xbdf8ff,size:.055,transparent:true,opacity:.78,blending:THREE.AdditiveBlending,depthWrite:false})));}head.add(eyes);
  halo=new THREE.Group();halo.position.z=-.38;head.add(halo);
  function arc(radius,start,length,z,opacity){var pts=[];for(var q=0;q<=72;q++){var aa=start+length*q/72;pts.push(new THREE.Vector3(Math.cos(aa)*radius,Math.sin(aa)*radius*.92,z));}var ag=new THREE.BufferGeometry().setFromPoints(pts);var am=new THREE.LineBasicMaterial({color:0x38bdf8,transparent:true,opacity:opacity,blending:THREE.AdditiveBlending,depthWrite:false});halo.add(new THREE.Line(ag,am));}
  arc(1.72,-2.78,1.16,0,.52);arc(1.72,-.18,1.02,0,.52);arc(1.91,-2.18,.72,-.02,.2);arc(1.91,.78,.68,-.02,.2);
  hud=new THREE.Group();head.add(hud);
- clock=new THREE.Clock();addEventListener("resize",fit);addEventListener("pointermove",function(e){pointerX=(e.clientX/innerWidth-.5)*2;pointerY=(e.clientY/innerHeight-.5)*2},{passive:true});fit();animate();}
+ scene.add(new THREE.HemisphereLight(0x80dfff,0x020614,1.25));var key=new THREE.DirectionalLight(0x9eeaff,2.2);key.position.set(2.5,3,4);scene.add(key);var rim=new THREE.PointLight(0x086cff,2.8,12);rim.position.set(-3,.5,-1);scene.add(rim);
+ loadAvatar();clock=new THREE.Clock();addEventListener("resize",fit);addEventListener("pointermove",function(e){pointerX=(e.clientX/innerWidth-.5)*2;pointerY=(e.clientY/innerHeight-.5)*2},{passive:true});fit();animate();}
+
+function disposeParticles(){if(!particleCloud)return;head.remove(particleCloud);particleCloud.geometry.dispose();particleCloud.material.dispose();particleCloud=null;eyes.visible=false;}
+function registerMorphs(root){morphMeshes=[];root.traverse(function(o){if(o.isMesh){o.castShadow=false;o.receiveShadow=false;if(o.morphTargetDictionary&&o.morphTargetInfluences)morphMeshes.push(o);if(o.material){o.material.transparent=true;o.material.needsUpdate=true;}}});}
+function loadAvatar(){if(!THREE.GLTFLoader)return;new THREE.GLTFLoader().load('/executive-avatar.glb',function(g){disposeParticles();avatarRoot=g.scene;avatarRoot.scale.setScalar(1.35);avatarRoot.position.y=-1.15;head.add(avatarRoot);registerMorphs(avatarRoot);},undefined,function(){/* Keep the premium particle entity until a branded GLB is supplied. */});}
+function driveMorphs(level){for(var i=0;i<morphMeshes.length;i++){var mesh=morphMeshes[i],dict=mesh.morphTargetDictionary,inf=mesh.morphTargetInfluences;Object.keys(dict).forEach(function(name){var low=name.toLowerCase();if(/jawopen|mouthopen|viseme_aa|viseme_oh/.test(low))inf[dict[name]]+=(level-inf[dict[name]])*.32;else if(/blink/.test(low)){var blink=Math.pow(Math.max(0,Math.sin(clock.elapsedTime*.72-1.2)),28);inf[dict[name]]+=(blink-inf[dict[name]])*.3;}});}}
 
 function animate(now){requestAnimationFrame(animate);if(!renderer)return;var t=clock.getElapsedTime();
  if(speaking&&spAnalyser){spAnalyser.getByteFrequencyData(spData);var s=0;for(var i=0;i<spData.length;i++)s+=spData[i];targetAmp=Math.min((s/spData.length/255)*2.6,1.3);}
@@ -156,6 +163,7 @@ function animate(now){requestAnimationFrame(animate);if(!renderer)return;var t=c
  lookX+=(tlx-lookX)*0.06;lookY+=(tly-lookY)*0.06;
  head.position.y=0.03+(reduced?0:0.018*Math.sin(t*.75));head.rotation.y=lookX*.087+(reduced?0:Math.sin(t*.28)*.018);head.rotation.x=-lookY*.052;
  particleMat.uniforms.time.value=t;particleMat.uniforms.audio.value=amp;particleMat.uniforms.state.value=STATE==="listening"?1:STATE==="thinking"?2:STATE==="speaking"?3:STATE==="tool"?4:STATE==="success"?5:STATE==="error"?6:0;
+ if(avatarRoot){avatarRoot.rotation.y=(reduced?0:Math.sin(t*.32)*.025);driveMorphs(STATE==="speaking"?Math.min(1,amp*1.35):0);}
  halo.children.forEach(function(line,k){line.material.color.setHex(col);line.material.opacity=(k<2?.34:.13)+amp*(k<2?.3:.14);});halo.rotation.z+=0.0007+amp*0.004;
  eyes.children.forEach(function(eye){eye.material.opacity=.55+(STATE==="listening"?.35:0)+amp*.28;eye.material.size=.05+amp*.035;});
  renderer.render(scene,camera);drawWave();if(lastFrame&&now-lastFrame>30)slowFrames++;else slowFrames=Math.max(0,slowFrames-1);if(slowFrames>80&&renderer.getPixelRatio()>1){renderer.setPixelRatio(1);particleMat.uniforms.pixel.value=1;fit();slowFrames=0;}lastFrame=now;}
