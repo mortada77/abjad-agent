@@ -21,7 +21,13 @@ const BROKEN_FALLBACK_RE = /ما وصلني رد واضح|جر[ّ ]?ب صياغ�
 
 /** Keep WhatsApp replies crisp without cutting a sentence in the middle. */
 function polishCustomerReply(value: string): string {
-  const text = value.trim().replace(/\n{3,}/g, '\n\n');
+  const text = value
+    .trim()
+    // WhatsApp should receive clean employee-style copy, never raw Markdown.
+    .replace(/\*/g, '')
+    .replace(/^\s{0,3}#{1,6}\s*/gm, '')
+    .replace(/`+/g, '')
+    .replace(/\n{3,}/g, '\n\n');
   if (text.length <= 650) return text;
   const clipped = text.slice(0, 650);
   const boundary = Math.max(clipped.lastIndexOf('.'), clipped.lastIndexOf('؟'), clipped.lastIndexOf('!'));
