@@ -52,7 +52,27 @@ export async function executiveAsk(message: string, session = 'default'): Promis
     return { reply: 'صار خطأ وأنا أعالج طلبك. جرّب مرة ثانية.', toolHints };
   }
 
-  reply = (reply || '').trim() || 'ما وصلني رد واضح، جرّب صياغة ثانية.';
+  reply = (reply || '').trim();
+  // Some reasoning models can exhaust a small completion budget before they
+  // emit visible text. Recover once instead of trapping the owner in a
+  // repetitive fallback loop.
+  if (!reply) {
+    logger.warn('[EXEC] empty tool response; retrying once without tools');
+    try {
+      reply = (
+        await provider.generateReply({
+          system:
+            system +
+            '\n\nجاوب الآن مباشرةً وباختصار على آخر طلب. لا تكرر سؤالاً سابقاً ولا تطلب إعادة الصياغة.',
+          history: priorHistory,
+          user: message,
+        })
+      ).trim();
+    } catch (err) {
+      logger.error('[EXEC] empty-response recovery failed: %s', (err as Error).message);
+    }
+  }
+  if (!reply) reply = 'صار خلل مؤقت بإخراج الرد. حاول مرة ثانية وأنا أعالجه.';
   store.execAddMessage('assistant', reply, session);
   void maybeSummarizeExecutive(session);
   return { reply, toolHints };

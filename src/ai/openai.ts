@@ -44,7 +44,9 @@ export class OpenAIProvider implements AIProvider {
 
     const res = await this.client.chat.completions.create({
       model: this.model,
-      max_completion_tokens: config.ai.maxTokens,
+      // Reasoning models can consume part of this budget before emitting text.
+      max_completion_tokens: Math.max(config.ai.maxTokens, 1200),
+      ...(/^(gpt-5|o[134])/.test(this.model) ? { reasoning_effort: 'low' } : {}),
       messages,
     } as any);
 
@@ -81,7 +83,8 @@ export class OpenAIProvider implements AIProvider {
     for (let round = 0; round < maxRounds; round++) {
       const res = await this.client.chat.completions.create({
         model: this.model,
-        max_completion_tokens: config.ai.maxTokens,
+        max_completion_tokens: Math.max(config.ai.maxTokens, 1400),
+        ...(/^(gpt-5|o[134])/.test(this.model) ? { reasoning_effort: 'low' } : {}),
         messages,
         tools,
         tool_choice: 'auto',

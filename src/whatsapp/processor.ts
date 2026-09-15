@@ -17,6 +17,17 @@ interface PendingState {
   processing: boolean;
 }
 
+const BROKEN_FALLBACK_RE = /ما وصلني رد واضح|جر[ّ ]?ب صياغة ثانية/i;
+
+/** Keep WhatsApp replies crisp without cutting a sentence in the middle. */
+function polishCustomerReply(value: string): string {
+  const text = value.trim().replace(/\n{3,}/g, '\n\n');
+  if (text.length <= 650) return text;
+  const clipped = text.slice(0, 650);
+  const boundary = Math.max(clipped.lastIndexOf('.'), clipped.lastIndexOf('؟'), clipped.lastIndexOf('!'));
+  return (boundary > 240 ? clipped.slice(0, boundary + 1) : clipped).trim();
+}
+
 /**
  * Per-contact message pipeline:
  *   - debounce: collect rapid messages, answer them together
@@ -52,6 +63,7 @@ export class MessageProcessor {
     }
     if (st.buffer.length === 0) return;
 
+    const incomingCount = st.buffer.length;
     const combined = st.buffer.join('\n').trim();
     st.buffer = [];
     st.timer = null;
@@ -74,7 +86,7 @@ export class MessageProcessor {
         return;
       }
 
-      const reply = await this.generate(jid, combined);
+      const reply = await this.generate(jid, combined, incomingCount);
       if (!reply) {
         logger.warn('[AI] Empty reply for %s', jid);
         return;
@@ -137,18 +149,26 @@ export class MessageProcessor {
     }
   }
 
-  private async generate(jid: string, userText: string): Promise<string> {
+  private async generate(jid: string, userText: string, incomingCount: number): Promise<string> {
     const { systemSuffix, history } = buildContext(jid);
+    // Incoming messages are already persisted before enqueue(). Remove them
+    // from prior history so the model sees each customer message exactly once.
+    let trimCount = 0;
+    for (let i = history.length - 1; i >= 0 && trimCount < incomingCount; i--) {
+      if (history[i].role !== 'user') break;
+      trimCount++;
+    }
+    const priorHistory = trimCount ? history.slice(0, -trimCount) : history;
     const websiteContext = await getWebsiteContext();
     const system = getSystemPrompt() + websiteContext + systemSuffix;
 
     const release = await this.globalLimiter.acquire();
     try {
       logger.info('[AI] request started for %s', jid);
-      const reply = await retry(
+      let reply = await retry(
         () =>
           withTimeout(
-            activeProvider().generateReply({ system, history, user: userText }),
+            activeProvider().generateReply({ system, history: priorHistory, user: userText }),
             config.ai.timeoutMs,
             'AI request',
           ),
@@ -158,8 +178,25 @@ export class MessageProcessor {
             logger.warn('[AI] retry %d for %s: %s', attempt, jid, err.message),
         },
       );
+      const previousAssistant = [...priorHistory].reverse().find((turn) => turn.role === 'assistant')?.content.trim();
+      const unusable = !reply.trim() || BROKEN_FALLBACK_RE.test(reply);
+      const repeated = Boolean(previousAssistant && reply.trim() === previousAssistant);
+      if (unusable || repeated) {
+        logger.warn('[AI] Regenerating %s reply for %s', unusable ? 'empty/fallback' : 'duplicate', jid);
+        reply = await withTimeout(
+          activeProvider().generateReply({
+            system:
+              system +
+              '\n\n## تصحيح إلزامي لهذه الإجابة\nأجب الآن بجواب عراقي جديد ومباشر من جملة إلى ثلاث جمل. افهم المقصود من السياق، ولا تكرر أي جواب سابق ولا تطلب إعادة الصياغة.',
+            history: priorHistory,
+            user: userText,
+          }),
+          config.ai.timeoutMs,
+          'AI recovery request',
+        );
+      }
       logger.info('[AI] response completed for %s', jid);
-      return reply;
+      return polishCustomerReply(reply);
     } finally {
       release();
     }
