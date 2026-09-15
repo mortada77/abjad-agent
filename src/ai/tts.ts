@@ -18,7 +18,7 @@ export function ttsAvailable(): boolean {
 // Voices: alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, verse.
 export const VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'onyx', 'nova', 'sage', 'shimmer', 'verse'];
 const DEFAULT_INSTRUCTIONS =
-  'تحدّث باللهجة العراقية العامية بنبرة ودّية وطبيعية وواثقة، مثل مساعد شخصي ذكي. إيقاع كلام طبيعي وغير روبوتي.';
+  'صوت أبجد التنفيذي: تحدّث باللهجة العراقية الطبيعية بصوت رجولي عميق ودافئ وهادئ، واثق وذكي من دون تكلف. الإيقاع متوسط مع وقفات قصيرة طبيعية، والنبرة ودّية راقية وليست إذاعية أو روبوتية. لا تبالغ بالحماس ولا تقرأ علامات التنسيق بصوت مسموع.';
 
 export function getVoice(): string {
   return store.getSetting('exec_voice') || 'onyx';
