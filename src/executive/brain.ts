@@ -4,6 +4,8 @@ import { activeProvider } from '../ai/index.js';
 import { EXECUTIVE_SYSTEM_PROMPT } from './prompt.js';
 import { buildExecutiveContext, maybeSummarizeExecutive } from './memory.js';
 import { EXECUTIVE_TOOLS, executeTool, toolHint } from './tools.js';
+import { retry, withTimeout } from '../util.js';
+import { config } from '../config.js';
 
 export interface ExecutiveReply {
   reply: string;
@@ -30,18 +32,30 @@ export async function executiveAsk(message: string, session = 'default'): Promis
   let reply: string;
   try {
     if (typeof provider.runWithTools === 'function') {
-      const res = await provider.runWithTools({
-        system,
-        history: priorHistory,
-        user: message,
-        tools: EXECUTIVE_TOOLS,
-        execute: executeTool,
-        onToolStart: (name) => {
-          const h = toolHint(name);
-          if (!toolHints.includes(h)) toolHints.push(h);
+      const res = await retry(
+        () =>
+          withTimeout(
+            provider.runWithTools!({
+              system,
+              history: priorHistory,
+              user: message,
+              tools: EXECUTIVE_TOOLS,
+              execute: executeTool,
+              onToolStart: (name) => {
+                const h = toolHint(name);
+                if (!toolHints.includes(h)) toolHints.push(h);
+              },
+              maxRounds: 6,
+            }),
+            config.ai.timeoutMs,
+            'Executive AI request',
+          ),
+        {
+          retries: config.ai.maxRetries,
+          onRetry: (attempt, error) =>
+            logger.warn('[EXEC] retry %d: %s', attempt, error.message),
         },
-        maxRounds: 6,
-      });
+      );
       reply = res.text;
     } else {
       // Provider without tool support: plain reply (no live data).
@@ -49,7 +63,29 @@ export async function executiveAsk(message: string, session = 'default'): Promis
     }
   } catch (err) {
     logger.error('[EXEC] ask failed: %s', (err as Error).message);
-    return { reply: 'صار خطأ وأنا أعالج طلبك. جرّب مرة ثانية.', toolHints };
+    try {
+      reply = (
+        await withTimeout(
+          provider.generateReply({
+            system:
+              system +
+              '\n\nتعذّر استخدام الأدوات بهذه اللحظة. جاوب على آخر رسالة بذكاء وباختصار اعتماداً على سياق المحادثة، ولا تدّعي أنك نفذت شيئاً أو تطلب منه إعادة المحاولة.',
+            history: priorHistory,
+            user: message,
+          }),
+          config.ai.timeoutMs,
+          'Executive AI recovery',
+        )
+      ).trim();
+    } catch (recoveryErr) {
+      logger.error('[EXEC] recovery failed: %s', (recoveryErr as Error).message);
+      // Do not persist a canned failure in memory: it poisons following turns
+      // and makes every message look like the same failed request.
+      return {
+        reply: 'الاتصال بالذكاء متوقف مؤقتاً. ما حفظت هذا الرد ضمن المحادثة حتى ما تتكرر المشكلة.',
+        toolHints,
+      };
+    }
   }
 
   reply = (reply || '').trim();
