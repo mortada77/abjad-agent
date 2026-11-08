@@ -8,6 +8,7 @@ import { runtime } from '../runtime.js';
 import { store } from '../db/index.js';
 import { control } from '../control.js';
 import { pause, resume } from '../takeover/takeover.js';
+import { registerReplyHook } from '../whatsapp/replyHooks.js';
 import { activeProvider, activeProviderName, activeModel } from '../ai/index.js';
 import { generateInsight, suggestReply, analyzeTrends } from '../ai/insight.js';
 import { executiveAsk } from '../executive/brain.js';
@@ -140,7 +141,10 @@ export function startHealthServer(): void {
     const text = String(req.body?.text || '');
     if (!jid || !text) return res.status(400).json({ error: 'jid and text required' });
     if (!control.sendMessage) return res.status(503).json({ error: 'whatsapp not connected' });
+    const hook = req.body?.replyHook;
     try {
+      // validate the hook before sending, so a bad request never sends a message
+      if (hook) registerReplyHook(jid, String(hook.url || ''), Number(hook.ttlMinutes));
       await control.sendMessage(jid, text);
       store.addMessage(jid, 'assistant', text);
       pause(jid); // manual message -> pause AI for this contact

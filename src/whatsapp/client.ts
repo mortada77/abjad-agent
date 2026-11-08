@@ -20,6 +20,7 @@ import { store } from '../db/index.js';
 import { control } from '../control.js';
 import { MessageProcessor } from './processor.js';
 import { handleOperatorCommand, onOperatorManualMessage, isAiActive } from '../takeover/takeover.js';
+import { tryReplyHook } from './replyHooks.js';
 import { sleep } from '../util.js';
 import { handleAdminWhatsApp } from './admin.js';
 
@@ -323,6 +324,12 @@ export async function startWhatsApp(): Promise<void> {
     store.upsertContact(jid, phoneFromJid(jid), pushName);
     store.addMessage(jid, 'user', text, msgId);
     logger.info('[WHATSAPP] message received from %s', phoneFromJid(jid));
+
+    // Another app is waiting for this contact's reply (e.g. order confirmation) — it goes first.
+    if (await tryReplyHook(jid, text, async (to, reply) => {
+      await send(to, reply);
+      store.addMessage(to, 'assistant', reply);
+    })) return;
 
     if (!control.aiGloballyEnabled) {
       logger.info('[AI] global auto-reply is OFF — not replying to %s', jid);
